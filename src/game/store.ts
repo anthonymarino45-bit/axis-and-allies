@@ -2783,7 +2783,16 @@ async function aiPlayTurn(get: () => Store, _set: unknown): Promise<void> {
   );
   for (let step = 0; step < 60; step++) {
     const g = get().game;
-    let best: { from: string; to: string; ids: string[]; score: number } | null = null;
+    let best: {
+      from: string;
+      to: string;
+      ids: string[];
+      score: number;
+      /** Units joining from other territories (a joint attack). */
+      extras?: Array<{ from: string; units: Unit[] }>;
+    } | null = null;
+    // What each territory could contribute to an attack on each enemy-held target.
+    const offers = new Map<string, Array<{ from: string; units: Unit[] }>>();
     for (const src of owned()) {
       const movable = src.units.filter(
         (u) => u.owner === player && !u.movedThisTurn && movesLeft(u) > 0 && isLand(u.type),
@@ -2836,12 +2845,46 @@ async function aiPlayTurn(get: () => Store, _set: unknown): Promise<void> {
             }
             group = picked;
           }
+          if (group.length) (offers.get(id) ?? offers.set(id, []).get(id)!).push({ from: src.id, units: group });
           const odds = aiOdds(group, defenders, t);
           if (odds < needed) continue;
           ids = group.map((u) => u.id);
           score = value * Math.min(odds, 3) - defenders.length - (spare ? 0 : 4);
         }
         if (!best || score > best.score) best = { from: src.id, to: id, ids, score };
+      }
+    }
+    // Joint attacks: pool the spare forces of several territories against a
+    // target none of them could take alone (or could take more safely together).
+    for (const [id, list] of offers) {
+      if (list.length < 2) continue;
+      const t = g.territories[id];
+      const defenders = t.units.filter((u) => u.owner !== player);
+      const value = aiValue(t, player);
+      const needed = value >= 20 ? 1.15 : 1.4;
+      const byPower = [...list].sort((a, b) => aiAttackPower(b.units) - aiAttackPower(a.units));
+      const used: typeof list = [];
+      const all: Unit[] = [];
+      for (const offer of byPower) {
+        used.push(offer);
+        all.push(...offer.units);
+        if (aiOdds(all, defenders, t) >= needed * 1.3) break;
+      }
+      if (used.length < 2) continue;
+      const odds = aiOdds(all, defenders, t);
+      if (odds < needed) continue;
+      // Lead from the territory whose whole group can make the trip together.
+      const lead = used.find((o) => legalMoveTargets(g, o.from, o.units).has(id));
+      if (!lead) continue;
+      const score = value * Math.min(odds, 3) - defenders.length - 2 * used.length;
+      if (!best || score > best.score) {
+        best = {
+          from: lead.from,
+          to: id,
+          ids: lead.units.map((u) => u.id),
+          score,
+          extras: used.filter((o) => o !== lead),
+        };
       }
     }
     if (!best) break;
@@ -2852,6 +2895,13 @@ async function aiPlayTurn(get: () => Store, _set: unknown): Promise<void> {
     if (!get().moveDialog) {
       failed.add(`${best.from}>${best.to}`);
       continue;
+    }
+    for (const extra of best.extras ?? []) {
+      const counts: Partial<Record<UnitType, number>> = {};
+      for (const u of extra.units) counts[u.type] = (counts[u.type] ?? 0) + 1;
+      for (const [type, n] of Object.entries(counts) as Array<[UnitType, number]>) {
+        get().setExtraCount(extra.from, type, n);
+      }
     }
     get().confirmMove();
     await sleep(220);
