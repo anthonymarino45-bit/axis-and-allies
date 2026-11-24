@@ -7,6 +7,7 @@ import { MusicPlayer } from "@/components/MusicPlayer";
 import { VictoryScreen } from "@/components/VictoryScreen";
 import { RulesReference } from "@/components/RulesReference";
 import { MultiplayerPanel } from "@/components/MultiplayerPanel";
+import { BattleCutscene } from "@/components/BattleCutscene";
 import { useGame } from "@/game/store";
 import { useNet } from "@/game/multiplayer";
 import { canRunAI, isAINation } from "@/game/control";
@@ -33,6 +34,7 @@ export function GameScreen() {
       </div>
       <CommandPanel />
       <BattleDialog />
+      <BattleCutscene />
       <MoveDialog />
       <MusicPlayer />
       <RulesReference />

@@ -30,7 +30,9 @@ npm run build    # type-check and build to dist/
 - `scripts/build-map.ts` — regenerates territory outlines from Natural Earth data
 - `roadmap.md` — which rulebook features are implemented
 
-Background music: put an MP3 at `public/audio/march.mp3`; the player stays hidden until then.
+Music and sound: the game plays its own synthesized march (`src/audio/engine.ts`) and battle
+sound effects. To use a real recording instead, add it as `public/audio/march.mp3`.
+Battles involving a human player open with a short cut scene (toggle it with the 🎬 button).
 
 ## Deploying
 

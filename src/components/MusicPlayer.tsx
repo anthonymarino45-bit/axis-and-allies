@@ -1,63 +1,103 @@
 import { useEffect, useRef, useState } from "react";
-import { Play, Pause, Volume2, VolumeX } from "lucide-react";
+import { Play, Pause, Volume2, VolumeX, Clapperboard } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
 import { Button } from "@/components/ui/button";
+import { useSettings } from "@/game/settings";
+import {
+  isMarchPlaying,
+  onMusicChange,
+  setVolume as setEngineVolume,
+  startMarch,
+  stopMarch,
+  unlockAudio,
+} from "@/audio/engine";
 
-// Background march. Drop an MP3 at public/audio/march.mp3 (for example a
-// public-domain U.S. Marine Band recording of Sousa's "Semper Fidelis").
-// Until that file exists the player stays hidden.
+// The game plays its own synthesized march. To use a real recording instead
+// (for example a public-domain U.S. Marine Band "Semper Fidelis"), add it as
+// public/audio/march.mp3 and the player switches to it automatically.
 const TRACK_URL = `${import.meta.env.BASE_URL}audio/march.mp3`;
 
 export function MusicPlayer() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const [playing, setPlaying] = useState(false);
-  const [volume, setVolume] = useState(40);
-  const [error, setError] = useState(false);
-  const [missing, setMissing] = useState(false);
+  const [recording, setRecording] = useState<boolean | null>(null);
+  const [recordingPlaying, setRecordingPlaying] = useState(false);
+  const [marchPlaying, setMarchPlaying] = useState(false);
+  const volume = useSettings((s) => s.volume);
+  const setVolume = useSettings((s) => s.setVolume);
+  const cutscenes = useSettings((s) => s.cutscenes);
+  const setCutscenes = useSettings((s) => s.setCutscenes);
+  const playing = recordingPlaying || marchPlaying;
+
+  // Is there a recording to play? Otherwise use the synthesized march.
+  useEffect(() => {
+    let cancelled = false;
+    fetch(TRACK_URL, { method: "HEAD" })
+      .then((r) => {
+        const type = r.headers.get("content-type") ?? "";
+        if (!cancelled) setRecording(r.ok && type.startsWith("audio"));
+      })
+      .catch(() => !cancelled && setRecording(false));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => onMusicChange(() => setMarchPlaying(isMarchPlaying())), []);
+  useEffect(() => () => stopMarch(), []);
 
   useEffect(() => {
     if (audioRef.current) audioRef.current.volume = volume / 100;
+    setEngineVolume(volume / 100);
   }, [volume]);
 
+  // The first click or key press anywhere enables battle sounds.
+  useEffect(() => {
+    const unlock = () => unlockAudio();
+    window.addEventListener("pointerdown", unlock, { once: true });
+    window.addEventListener("keydown", unlock, { once: true });
+    return () => {
+      window.removeEventListener("pointerdown", unlock);
+      window.removeEventListener("keydown", unlock);
+    };
+  }, []);
+
   const toggle = async () => {
-    const a = audioRef.current;
-    if (!a) return;
+    unlockAudio();
     if (playing) {
-      a.pause();
-    } else {
+      audioRef.current?.pause();
+      stopMarch();
+      return;
+    }
+    if (recording && audioRef.current) {
       try {
-        setError(false);
-        await a.play();
-      } catch (e) {
-        setError(true);
-        console.error("audio play failed", e);
+        await audioRef.current.play();
+        return;
+      } catch {
+        // Fall through to the synthesized march.
       }
     }
+    startMarch();
   };
-
-  if (missing) return null;
 
   return (
     <div className="fixed bottom-[4.25rem] left-3 z-20 flex items-center gap-2 rounded-md border border-border bg-background/90 px-3 py-2 shadow-lg backdrop-blur lg:bottom-3 lg:left-3 lg:z-50">
-      <audio
-        ref={audioRef}
-        src={TRACK_URL}
-        loop
-        preload="metadata"
-        onPlay={() => setPlaying(true)}
-        onPause={() => setPlaying(false)}
-        onError={() => {
-          setPlaying(false);
-          // No track has been added to the project: hide the player.
-          if (!audioRef.current?.currentTime) setMissing(true);
-          else setError(true);
-        }}
-      />
+      {recording && (
+        <audio
+          ref={audioRef}
+          src={TRACK_URL}
+          loop
+          preload="none"
+          onPlay={() => setRecordingPlaying(true)}
+          onPause={() => setRecordingPlaying(false)}
+          onError={() => setRecording(false)}
+        />
+      )}
       <Button
         size="icon"
         variant="ghost"
         onClick={toggle}
         aria-label={playing ? "Pause music" : "Play music"}
+        title={playing ? "Pause the march" : "Play the march"}
         className="h-8 w-8"
       >
         {playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
@@ -72,11 +112,21 @@ export function MusicPlayer() {
         onValueChange={(v) => setVolume(v[0] ?? 0)}
         max={100}
         step={1}
-        className="w-32"
+        className="w-24 sm:w-32"
         aria-label="Volume"
       />
-      <span className="w-8 text-right text-xs text-muted-foreground tabular-nums">{volume}</span>
-      {error && <span className="text-xs text-destructive">Music unavailable</span>}
+      <span className="w-7 text-right text-xs text-muted-foreground tabular-nums">{volume}</span>
+      <Button
+        size="icon"
+        variant="ghost"
+        onClick={() => setCutscenes(!cutscenes)}
+        aria-pressed={cutscenes}
+        aria-label={cutscenes ? "Turn battle cut scenes off" : "Turn battle cut scenes on"}
+        title={cutscenes ? "Battle cut scenes: on" : "Battle cut scenes: off"}
+        className={"h-8 w-8 " + (cutscenes ? "" : "opacity-40")}
+      >
+        <Clapperboard className="h-4 w-4" />
+      </Button>
     </div>
   );
 }
