@@ -8,12 +8,18 @@ export function MoveDialog() {
   const setMoveCount = useGame((s) => s.setMoveCount);
   const confirmMove = useGame((s) => s.confirmMove);
   const cancelMove = useGame((s) => s.cancelMove);
+  const setExtraCount = useGame((s) => s.setExtraCount);
 
   if (!moveDialog) return null;
 
   const to = game.territories[moveDialog.targetId];
   const types = Object.keys(moveDialog.idsByType) as UnitType[];
-  const totalChosen = Object.values(moveDialog.chosen).reduce((a, b) => a + b, 0);
+  const extras = moveDialog.extras ?? [];
+  const extraChosen = extras.reduce(
+    (n, e) => n + Object.values(e.chosen).reduce((a, b) => a + b, 0),
+    0,
+  );
+  const totalChosen = Object.values(moveDialog.chosen).reduce((a, b) => a + b, 0) + extraChosen;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
@@ -82,6 +88,48 @@ export function MoveDialog() {
             );
           })}
         </div>
+
+        {extras.length > 0 && (
+          <div className="mt-4">
+            <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-muted-foreground">
+              Join the attack from neighbouring territories
+            </div>
+            <div className="mt-2 max-h-56 space-y-2 overflow-y-auto pr-1">
+              {extras.map((e) => (
+                <div key={e.fromId} className="rounded border border-border bg-card px-3 py-2">
+                  <div className="text-xs font-semibold">From {game.territories[e.fromId]?.name}</div>
+                  {(Object.keys(e.idsByType) as UnitType[]).map((type) => {
+                    const s = UNIT_STATS[type];
+                    const available = e.idsByType[type].length;
+                    const chosen = e.chosen[type] ?? 0;
+                    return (
+                      <div key={type} className="mt-1 flex items-center justify-between gap-2">
+                        <span className="text-xs">{s.label}</span>
+                        <div className="flex items-center gap-2">
+                          <CountInput
+                            id={`extra-${e.fromId}-${type}`}
+                            label={`${s.label} joining from ${game.territories[e.fromId]?.name}`}
+                            value={chosen}
+                            max={available}
+                            onChange={(n) => setExtraCount(e.fromId, type, n)}
+                          />
+                          <span className="w-10 text-[10px] text-muted-foreground">of {available}</span>
+                          <button
+                            type="button"
+                            onClick={() => setExtraCount(e.fromId, type, chosen === available ? 0 : available)}
+                            className="rounded border border-border px-1.5 py-1 text-[10px] font-semibold uppercase hover:bg-accent"
+                          >
+                            {chosen === available ? "None" : "All"}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="mt-4 text-center text-xs text-muted-foreground">
           Sending {totalChosen} unit{totalChosen !== 1 ? "s" : ""}

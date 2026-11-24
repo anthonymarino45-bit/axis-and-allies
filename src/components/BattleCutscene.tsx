@@ -5,6 +5,7 @@ import { isAINation } from "@/game/control";
 import {
   NATIONS,
   isAir,
+  isNaval,
   type Faction,
   type GameState,
   type Unit,
@@ -44,6 +45,7 @@ interface Actor {
   type: UnitType;
   side: Side;
   air: boolean;
+  naval: boolean;
   img: HTMLImageElement;
   x: number;
   y: number;
@@ -86,6 +88,8 @@ interface RoundScene {
   title: string;
   subtitle: string;
   sea: boolean;
+  /** Land battle with ships on the attacking side: water runs up to this x. */
+  shore?: number;
   attacker: FactionInfo & { lost: number; hits: number; hidden: number };
   defender: FactionInfo & { lost: number; hits: number; hidden: number };
   actors: Actor[];
@@ -167,6 +171,7 @@ function layoutSide(units: Unit[], side: Side, rand: () => number): Actor[] {
       type: u.type,
       side,
       air: false,
+      naval: isNaval(u.type),
       img: icon(u.type),
       x: side === "att" ? off : 1 - off,
       y: rankY[rank],
@@ -181,6 +186,7 @@ function layoutSide(units: Unit[], side: Side, rand: () => number): Actor[] {
       type: u.type,
       side,
       air: true,
+      naval: false,
       img: icon(u.type),
       x: side === "att" ? off : 1 - off,
       y: 0.2 + Math.floor(i / 4) * 0.09 + (i % 2) * 0.04,
@@ -189,6 +195,22 @@ function layoutSide(units: Unit[], side: Side, rand: () => number): Actor[] {
     });
   });
   return actors;
+}
+
+const SHORE = 0.34;
+/** Split the attacking side at the shoreline: ships in the water, troops ashore. */
+function applyShore(actors: Actor[]): number | undefined {
+  const ships = actors.filter((a) => a.side === "att" && a.naval);
+  if (!ships.length) return undefined;
+  ships.forEach((a, i) => {
+    a.x = 0.05 + ((i + 0.5) / ships.length) * (SHORE - 0.1);
+    a.y = i % 2 ? 0.68 : 0.76;
+  });
+  const troops = actors.filter((a) => a.side === "att" && !a.naval && !a.air);
+  troops.forEach((a) => {
+    a.x = SHORE + 0.03 + (a.x - 0.07) * 0.55;
+  });
+  return SHORE;
 }
 
 /** Keep the dead and the shooters on screen when a side is too big to show whole. */
@@ -241,6 +263,7 @@ function buildRoundScene(
   const shownAtk = pickShown(attackers, deadAtk, new Set(atkRolls.map((r) => r.unitId)));
   const shownDef = pickShown(defenders, deadDef, new Set(defRolls.map((r) => r.unitId)));
   const actors = [...layoutSide(shownAtk, "att", rand), ...layoutSide(shownDef, "def", rand)];
+  const shore = applyShore(actors);
   const byId = new Map(actors.map((a) => [a.id, a]));
 
   // Queues of the units each side's hits must claim.
@@ -349,6 +372,7 @@ function buildRoundScene(
     title: toPrev.name,
     subtitle,
     sea: toPrev.isSea,
+    shore: toPrev.isSea ? undefined : (shore ?? (fromPrev.isSea ? SHORE : undefined)),
     attacker: {
       ...att,
       lost: deadAtk.size,
@@ -385,6 +409,7 @@ function buildBombardScene(prevGame: GameState, ev: BombardEvent): RoundScene | 
   const shownAtk = guns.slice(0, MAX_PER_SIDE);
   const shownDef = pickShown(defenders, dead, new Set());
   const actors = [...layoutSide(shownAtk, "att", rand), ...layoutSide(shownDef, "def", rand)];
+  const shore = applyShore(actors);
   const byId = new Map(actors.map((a) => [a.id, a]));
   const defActors = actors.filter((a) => a.side === "def");
 
@@ -466,6 +491,7 @@ function buildBombardScene(prevGame: GameState, ev: BombardEvent): RoundScene | 
     title: target.name,
     subtitle: "Bombardment",
     sea: target.isSea,
+    shore: target.isSea ? undefined : shore,
     attacker: { ...att, lost: 0, hits: dead.size, hidden: guns.length - shownAtk.length },
     defender: { ...def, lost: dead.size, hits: 0, hidden: defenders.length - shownDef.length },
     actors,
@@ -768,9 +794,47 @@ function CutscenePlayer({
         ctx.fillRect(0, H * 0.6, W, H * 0.4);
         ctx.fillStyle = "rgba(0,0,0,0.28)";
         for (const c of craters) {
+          if (scene.shore && c.x < scene.shore + 0.04) continue;
           ctx.beginPath();
           ctx.ellipse(c.x * W, c.y * H, c.r * W, c.r * H * 0.35, 0, 0, Math.PI * 2);
           ctx.fill();
+        }
+        if (scene.shore) {
+          // The sea the fleet fires from, meeting the beach.
+          const edge = (y: number) =>
+            scene.shore! * W + Math.sin(y * 0.045 + t * 1.3) * 6 + (y - H * 0.6) * 0.18;
+          const coast = () => {
+            ctx.beginPath();
+            ctx.moveTo(0, H * 0.6);
+            for (let y = H * 0.6; y <= H; y += 8) ctx.lineTo(edge(y), y);
+            ctx.lineTo(0, H);
+            ctx.closePath();
+          };
+          ctx.save();
+          ctx.strokeStyle = "#8d7a52";
+          ctx.lineWidth = 16;
+          coast();
+          ctx.stroke(); // sand
+          const sea = ctx.createLinearGradient(0, H * 0.6, 0, H);
+          sea.addColorStop(0, "#22323d");
+          sea.addColorStop(1, "#0b1218");
+          ctx.fillStyle = sea;
+          coast();
+          ctx.fill();
+          ctx.clip();
+          ctx.strokeStyle = "rgba(170, 200, 215, 0.2)";
+          ctx.lineWidth = 1.5;
+          for (let row = 0; row < 9; row++) {
+            const y = H * (0.63 + row * 0.042);
+            ctx.beginPath();
+            for (let x = 0; x <= scene.shore * W + 60; x += 16) {
+              const yy = y + Math.sin(x * 0.02 + t * 2.4 + row) * (2 + row * 0.6);
+              if (x === 0) ctx.moveTo(x, yy);
+              else ctx.lineTo(x, yy);
+            }
+            ctx.stroke();
+          }
+          ctx.restore();
         }
       }
     };
@@ -779,7 +843,7 @@ function CutscenePlayer({
       let x = a.x;
       let y = a.y;
       if (a.air) y += Math.sin(t * 3 + a.x * 10) * 0.008;
-      else if (scene.sea) y += Math.sin(t * 2.2 + a.x * 9) * 0.006;
+      else if (scene.sea || (scene.shore && a.naval)) y += Math.sin(t * 2.2 + a.x * 9) * 0.006;
       // Recoil when firing.
       if (a.fireAt !== undefined && t > a.fireAt && t < a.fireAt + 0.18) {
         x += (a.side === "att" ? -1 : 1) * 0.008 * (1 - (t - a.fireAt) / 0.18);

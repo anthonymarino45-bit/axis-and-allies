@@ -29,6 +29,8 @@ interface MoveDialogState {
   targetId: string;
   idsByType: Record<string, string[]>;
   chosen: Record<string, number>;
+  /** Other territories whose units can join this attack. */
+  extras?: Array<{ fromId: string; idsByType: Record<string, string[]>; chosen: Record<string, number> }>;
 }
 
 interface UIState {
@@ -170,6 +172,8 @@ interface Store extends UIState {
   selectAllUnitsHere: () => void;
   openMoveDialog: (targetId: string) => void;
   setMoveCount: (type: UnitType, count: number) => void;
+  /** How many units of a type join the attack from another territory. */
+  setExtraCount: (fromId: string, type: UnitType, count: number) => void;
   confirmMove: () => void;
   cancelMove: () => void;
   buyUnit: (type: UnitType) => void;
@@ -1048,7 +1052,51 @@ export const useGame = create<Store>((set, get) => ({
     const chosen: Record<string, number> = {};
     for (const type in idsByType) chosen[type] = idsByType[type].length;
 
-    set({ moveDialog: { targetId, idsByType, chosen } });
+    // Attacking an enemy-held land territory: units in other territories
+    // that can also reach it may join the same battle.
+    const player = game.currentPlayer;
+    const isAttack =
+      !from.isSea && !to.isSea && to.owner !== "neutral" && to.owner !== player && to.units.length > 0 &&
+      moving.every((u) => isLand(u.type));
+    const extras: NonNullable<MoveDialogState["extras"]> = [];
+    if (isAttack) {
+      for (const other of Object.values(game.territories)) {
+        if (other.id === from.id || other.isSea || other.owner !== player) continue;
+        const ready = other.units.filter(
+          (u) =>
+            u.owner === player && !u.movedThisTurn && movesLeft(u) > 0 && isLand(u.type) &&
+            legalMoveTargets(game, other.id, [u]).has(to.id),
+        );
+        if (!ready.length) continue;
+        const byType: Record<string, string[]> = {};
+        for (const u of ready) (byType[u.type] ??= []).push(u.id);
+        extras.push({ fromId: other.id, idsByType: byType, chosen: {} });
+      }
+    }
+
+    set({ moveDialog: { targetId, idsByType, chosen, extras: extras.length ? extras : undefined } });
+  },
+
+  setExtraCount: (fromId, type, count) => {
+    set((s) => {
+      if (!s.moveDialog?.extras) return s;
+      return {
+        moveDialog: {
+          ...s.moveDialog,
+          extras: s.moveDialog.extras.map((e) =>
+            e.fromId !== fromId
+              ? e
+              : {
+                  ...e,
+                  chosen: {
+                    ...e.chosen,
+                    [type]: Math.max(0, Math.min(e.idsByType[type]?.length ?? 0, count)),
+                  },
+                },
+          ),
+        },
+      };
+    });
   },
 
   setMoveCount: (type: UnitType, count: number) => {
@@ -1201,6 +1249,23 @@ export const useGame = create<Store>((set, get) => ({
           u.cargo = u.cargo.filter((c) => !chosenUnitIds.includes(c.id));
           fromN.units.push(...leaving);
         }
+      }
+    }
+
+    if (isEnemyHeld && kind === "land" && moveDialog.extras) {
+      // Units joining from neighbouring territories assemble with the main
+      // force for the battle, remembering where they came from.
+      for (const extra of moveDialog.extras) {
+        const src = next.territories[extra.fromId];
+        if (!src || src.owner !== player) continue;
+        const ids: string[] = [];
+        for (const [type, list] of Object.entries(extra.idsByType)) ids.push(...list.slice(0, extra.chosen[type] ?? 0));
+        if (!ids.length) continue;
+        const joining = src.units.filter((u) => ids.includes(u.id) && !u.movedThisTurn);
+        src.units = src.units.filter((u) => !joining.some((j) => j.id === u.id));
+        fromN.units.push(...joining.map((u) => ({ ...u, stagedFrom: src.id })));
+        chosenUnitIds.push(...joining.map((u) => u.id));
+        movers.push(...joining);
       }
     }
 
@@ -1390,8 +1455,13 @@ export const useGame = create<Store>((set, get) => ({
     if (pendingBattle.status === "attacker-won") {
       const movers = from.units.filter((u) => pendingBattle.attackerUnitIds.includes(u.id));
       from.units = from.units.filter((u) => !pendingBattle.attackerUnitIds.includes(u.id));
-      const battleDist = Math.max(1, tileDistance(game, from.id, to.id, 8));
-      to.units = movers.map((u) => spendMoves(u, battleDist));
+      // Each unit pays for the distance from where it actually set out.
+      to.units = movers.map((u) => {
+        const dist = Math.max(1, tileDistance(game, u.stagedFrom ?? from.id, to.id, 8));
+        const { stagedFrom: _origin, ...rest } = spendMoves(u, dist);
+        void _origin;
+        return rest;
+      });
       if (!to.isSea) captureTerritory(next, to, player);
       log(next, `${NATIONS[player].name} captured ${to.name}.`);
       nextSelectedId = to.id;
@@ -1401,6 +1471,16 @@ export const useGame = create<Store>((set, get) => ({
       from.units = from.units.map((u) =>
         pendingBattle.attackerUnitIds.includes(u.id) ? { ...u, movedThisTurn: true } : u,
       );
+      // Units that joined from elsewhere go back where they came from.
+      const stayed: Unit[] = [];
+      for (const u of from.units) {
+        const home = u.stagedFrom ? next.territories[u.stagedFrom] : null;
+        const { stagedFrom: _origin, ...rest } = u;
+        void _origin;
+        if (home && home.owner === player) home.units.push(rest);
+        else stayed.push(rest);
+      }
+      from.units = stayed;
       log(next, `Forces withdrew from ${to.name}.`);
       resolvedAnimation = mapAnimation("retreat", to.id, from.id, retreating);
     } else if (pendingBattle.status === "defender-won") {

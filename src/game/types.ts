@@ -188,6 +188,8 @@ export interface Unit {
   cargo?: Unit[];
   /** Towed by a halftrack/cargo truck this turn — guns cannot bombard after a tow. */
   towedThisTurn?: boolean;
+  /** Joined an attack from a neighbouring territory; it returns there on a withdrawal. */
+  stagedFrom?: string;
   /** Already fired a stand-off bombardment this turn. */
   bombardedThisTurn?: boolean;
   /** This bomber is the declared carrier of an assembled A-bomb. */

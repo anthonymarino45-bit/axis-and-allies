@@ -262,6 +262,10 @@ function RulesBody({ tab }: { tab: Tab }) {
             Battles are fought one roll at a time. After each round the attacker may withdraw its
             surviving units, with no roll and no penalty.
           </li>
+          <li>
+            Joint attacks: when attacking, units in your other territories that can also reach the
+            target may join the same battle. If you withdraw, each returns to where it came from.
+          </li>
           <li>Islands hold at most 15 units.</li>
         </ul>
       </Section>
