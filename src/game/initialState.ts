@@ -1571,6 +1571,101 @@ for (const subdivision of MAP_SUBDIVISIONS) {
   SEEDS.push(child);
 }
 
+// Land borders missing from the hand-written neighbour lists (or dropped when
+// a territory was split in two). Every pair here shares at least 20 map units
+// of real border in MAP_SHAPES, so units can march between them.
+const SHARED_BORDERS: Array<[string, string]> = [
+  ["sa_per", "sa_amz_s"], // Peru & Ecuador – Mato Grosso
+  ["as_chi", "as_kaz_s"], // North China – Turkestan
+  ["af_con", "af_ang"], // Congo Basin West – Angola & Namibia
+  ["t4", "ca3_e"], // Territory 4 – Ontario
+  ["af_eaf_e", "af_con_e"], // Kenya & Tanzania – Congo Basin East
+  ["sa_arg", "sa_per_s"], // Pampas – Bolivia
+  ["as_csib_n", "as_csib_e_n"], // Northern Central Siberia – Northern Yakutia West
+  ["as_mon", "as_csib_e"], // Mongolia – Southern Yakutia West
+  ["as_kaz", "as_ura"], // Kazakhstan – Southern Volga-Urals
+  ["sa_amz", "sa_col_e"], // Amazonia North – Colombia East
+  ["af_eaf_w", "af_saf_e"], // Great Lakes Africa – Mozambique
+  ["as_wsib_e_n", "as_csib_n"], // Northern Ob Basin – Northern Central Siberia
+  ["af_hor", "af_con_e"], // Ethiopian Highlands – Congo Basin East
+  ["as_csib_e_n", "as_fee_n"], // Northern Yakutia West – Northern Yakutia East
+  ["as_wsib_n", "as_wsib_e_n"], // Northern West Siberia – Northern Ob Basin
+  ["af_sah_w_s", "af_gui_e"], // Sahel West – Gold Coast
+  ["sa_chl", "sa_arg_s"], // Chile – Northern Patagonia
+  ["ca1_n", "ca6_e"], // Yukon – Central Arctic
+  ["af_eaf_e", "af_hor_e"], // Kenya & Tanzania – Somalia
+  ["eu_mos_e", "eu_rus_n_e"], // Moscow East – Northern Russia East
+  ["sa_amz_s", "sa_per_s"], // Mato Grosso – Bolivia
+  ["as_fee_n", "as_fee_e_n"], // Northern Yakutia East – Northeast Siberia
+  ["as_per", "as_kaz_s"], // Iran – Turkestan
+  ["af_sah_e_s", "af_egy_s"], // Sahel Central – Sudan
+  ["as_ura", "eu_mos_e"], // Southern Volga-Urals – Moscow East
+  ["sa_col", "sa_per"], // Colombia West – Peru & Ecuador
+  ["sa_bra_s", "sa_arg_s"], // Southern Brazil – Northern Patagonia
+  ["as_cau", "eu_rus_s_e"], // Caucasus & Anatolia – Southern Russia East
+  ["as_kam_n", "as_fee_e_n"], // Kamchatka North – Northeast Siberia
+  ["as_kaz", "eu_rus_s_e"], // Kazakhstan – Southern Russia East
+  ["t1", "t6"], // Pacific Northwest – Territory 6
+  ["as_ura_n", "as_ura_e_n"], // Northern Volga-Urals – Northern Urals
+  ["af_sah_e", "af_lib_e"], // Central Sahara – Libya East
+  ["t7", "t2_e"], // Territory 7 – Northern Plains East
+  ["t12", "mx1"], // Territory 12 – Mexico Norte
+  ["af_sah_e_s", "af_gui_e"], // Sahel Central – Gold Coast
+  ["ca1", "t1_e"], // British Columbia – Northern Rockies
+  ["af_eaf_w", "af_ang"], // Great Lakes Africa – Angola & Namibia
+  ["as_kaz", "as_wsib_e"], // Kazakhstan – Southern Ob Basin
+  ["eu_fra_n", "eu_ger_s"], // Low Countries – Alpine States
+  ["as_chi", "as_fee_e"], // North China – Amur Region
+  ["ca2", "t2"], // Canada Prairies – Northern Plains West
+  ["t3", "t8"], // Upper Midwest – Territory 8
+  ["sa_amz", "sa_brn"], // Amazonia North – Pará
+  ["sa_bra", "sa_arg"], // Southeast Brazil – Pampas
+  ["ca2", "ca1_n"], // Canada Prairies – Yukon
+  ["ca4", "t5"], // Southern Quebec – Appalachia North
+  ["au_nt", "au_qld_s"], // Northern Territory – Darling Downs
+  ["as_kaz", "eu_mos_e"], // Kazakhstan – Moscow East
+  ["as_ura_e_n", "as_wsib_n"], // Northern Urals – Northern West Siberia
+  ["af_sah_w", "af_mag_e"], // Western Sahara – Algeria & Tunisia
+  ["t13", "t16_e"], // Territory 13 – West Texas
+  ["as_sea", "as_ind_s"], // Indochina – South India
+  ["ca3", "t3"], // Manitoba – Upper Midwest
+  ["eu_fra", "eu_ita"], // France – Italy
+  ["eu_rus_s", "eu_mos_e"], // Southern Russia West – Moscow East
+  ["ca2", "t3"], // Canada Prairies – Upper Midwest
+  ["af_egy_s", "af_con_e"], // Sudan – Congo Basin East
+  ["t13", "t18"], // Territory 13 – Territory 18
+  ["ca4", "ca5"], // Southern Quebec – Maritimes
+  ["sa_brn", "sa_amz_s"], // Pará – Mato Grosso
+  ["au_qld_s", "au_sa_e"], // Darling Downs – South Australia East
+  ["as_kam", "as_fee_e"], // Kamchatka South – Amur Region
+  ["eu_pol", "eu_ukr"], // Poland & Baltics – Western Ukraine
+  ["eu_fra", "eu_ger_s"], // France – Alpine States
+  ["af_sah_e", "af_sah_w_s"], // Central Sahara – Sahel West
+  ["eu_mos_e", "as_ura_n"], // Moscow East – Northern Volga-Urals
+  ["sa_ven", "sa_amz"], // Venezuela West – Amazonia North
+  ["as_lev", "af_egy"], // Levant & Mesopotamia – Egypt
+  ["as_ura_e", "as_ura_n"], // Southern Urals – Northern Volga-Urals
+  ["sa_bra", "sa_per_s"], // Southeast Brazil – Bolivia
+  ["t14", "t19"], // Territory 14 – Territory 19
+  ["as_csib", "as_csib_e_n"], // Southern Central Siberia – Northern Yakutia West
+  ["eu_pol", "eu_ger_s"], // Poland & Baltics – Alpine States
+  ["au_nt", "au_sa_e"], // Northern Territory – South Australia East
+  ["af_gui_e", "af_nga_s"], // Gold Coast – Cameroon
+  ["af_sah_e_s", "af_nga_s"], // Sahel Central – Cameroon
+  ["eu_mos", "eu_rus_s"], // Moscow West – Southern Russia West
+  ["mx1", "t16_e"], // Mexico Norte – West Texas
+  ["as_csib", "as_wsib_e_n"], // Southern Central Siberia – Northern Ob Basin
+  ["as_fee_e", "as_fee_n"], // Amur Region – Northern Yakutia East
+  ["as_chi", "as_per_e"], // North China – Afghanistan & Pakistan
+];
+for (const [a, b] of SHARED_BORDERS) {
+  const A = SEEDS.find((seed) => seed.id === a);
+  const B = SEEDS.find((seed) => seed.id === b);
+  if (!A || !B) continue;
+  if (!A.adjacent.includes(b)) A.adjacent.push(b);
+  if (!B.adjacent.includes(a)) B.adjacent.push(a);
+}
+
 
 
 // =====================================================================
