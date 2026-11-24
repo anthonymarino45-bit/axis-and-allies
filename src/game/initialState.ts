@@ -1576,8 +1576,12 @@ for (const subdivision of MAP_SUBDIVISIONS) {
 // =====================================================================
 // Procedural sea-hex grid
 // =====================================================================
-// Tile the entire map viewbox with pointy-top hexagons, drop any hex whose
-// centre falls inside a land polygon, and wire adjacency:
+// Tile the entire map viewbox with pointy-top hexagons and keep every hex
+// that holds a meaningful amount of open water — including coastal hexes
+// whose centre happens to fall on land, so jagged coastlines never leave
+// unusable strips of sea. (Land is drawn over the sea, so a coastal hex
+// appears cut off by the coastline; its units sit on its water.) Then wire
+// adjacency:
 //   - sea ↔ sea between any two surviving hexes that are axial neighbours
 //   - sea ↔ land for any neighbour-cell position that lies inside a land
 //     polygon (that land territory becomes adjacent to the hex)
@@ -1653,11 +1657,44 @@ function findContainingLand(x: number, y: number, lands: LandPoly[]): string | n
   return null;
 }
 
+/** Sample points spread across a hex (rings out to just inside its edges). */
+const HEX_SAMPLES: Array<[number, number]> = (() => {
+  const pts: Array<[number, number]> = [[0, 0]];
+  const inner = (HEX_SIZE * Math.sqrt(3)) / 2; // centre-to-edge distance
+  for (let ring = 1; ring <= 4; ring++) {
+    const rad = (inner * 0.88 * ring) / 4;
+    const n = ring * 6;
+    for (let k = 0; k < n; k++) {
+      const a = (2 * Math.PI * k) / n;
+      pts.push([rad * Math.cos(a), rad * Math.sin(a)]);
+    }
+  }
+  return pts;
+})();
+/** A hex is ocean if at least this share of it is water. */
+const MIN_WATER = 0.06;
+
+/** The water sample closest to (x, y) — the average of split water can land on land. */
+function nearestWet(points: Array<[number, number]>, x: number, y: number): { x: number; y: number } {
+  let best = points[0];
+  let bestD = Infinity;
+  for (const p of points) {
+    const d = (p[0] - x) ** 2 + (p[1] - y) ** 2;
+    if (d < bestD) {
+      bestD = d;
+      best = p;
+    }
+  }
+  return { x: best[0], y: best[1] };
+}
+
 interface SeaHex {
   id: string;
   q: number;
   r: number;
   centre: { x: number; y: number };
+  /** Middle of the hex's open water: where its units and label go. */
+  waterCentre: { x: number; y: number };
   points: string;
   seaNeighbours: string[];
   landNeighbours: Set<string>;
@@ -1685,12 +1722,33 @@ function generateSeaHexes(): {
       const c = hexCenter(q, r);
       if (c.x < vx - HEX_SIZE || c.x > vx + vw + HEX_SIZE) continue;
       if (c.y < vy - HEX_SIZE || c.y > vy + vh + HEX_SIZE) continue;
-      if (findContainingLand(c.x, c.y, lands)) continue;
+      // Measure how much of this hex is open water.
+      let wet = 0, sx = 0, sy = 0;
+      const wetPoints: Array<[number, number]> = [];
+      const shallow: Array<[number, number]> = [];
+      for (const [dx, dy] of HEX_SAMPLES) {
+        const px = c.x + dx, py = c.y + dy;
+        if (!findContainingLand(px, py, lands)) {
+          wet++;
+          sx += px;
+          sy += py;
+          // Prefer open water for placing units: no coast within 14 units.
+          const D = 14;
+          const open = [[D, 0], [-D, 0], [0, D], [0, -D]].every(
+            ([ox, oy]) => !findContainingLand(px + ox, py + oy, lands),
+          );
+          if (open) wetPoints.push([px, py]);
+          else shallow.push([px, py]);
+        }
+      }
+      if (wet / HEX_SAMPLES.length < MIN_WATER) continue;
+      const centreWet = !findContainingLand(c.x, c.y, lands);
       const id = `sea_${q}_${r}`.replace(/-/g, "n");
       grid.set(`${q},${r}`, {
         id,
         q, r,
         centre: c,
+        waterCentre: centreWet ? c : nearestWet(wetPoints.length ? wetPoints : shallow, sx / wet, sy / wet),
         points: hexPoints(c.x, c.y),
         seaNeighbours: [],
         landNeighbours: new Set(),
@@ -1707,15 +1765,56 @@ function generateSeaHexes(): {
         hex.seaNeighbours.push(nb.id);
         continue;
       }
-      // Neighbour cell is missing — either off-map or blocked by land.
-      const nc = hexCenter(nq, nr);
-      const landId = findContainingLand(nc.x, nc.y, lands);
-      if (landId) {
-        hex.landNeighbours.add(landId);
-        if (!landAdj[landId]) landAdj[landId] = new Set();
-        landAdj[landId].add(hex.id);
+      // Neighbour cell is off-map or solid land. Land links come from the
+      // coastline sampling below, so inland territories never count as coastal.
+    }
+  }
+
+  // Neighbouring hexes only connect if water runs across their shared edge —
+  // otherwise ships could sail over an isthmus (Panama and Suez are crossed
+  // through their canals instead). A link is kept anyway if cutting it would
+  // strand part of the ocean.
+  const shareWater = (a: SeaHex, b: SeaHex) => {
+    const mx = (a.centre.x + b.centre.x) / 2, my = (a.centre.y + b.centre.y) / 2;
+    const dx = b.centre.x - a.centre.x, dy = b.centre.y - a.centre.y;
+    const len = Math.hypot(dx, dy);
+    const px = -dy / len, py = dx / len;
+    const half = HEX_SIZE / 2;
+    for (let k = -10; k <= 10; k++) {
+      if (!findContainingLand(mx + (px * half * k) / 10, my + (py * half * k) / 10, lands)) return true;
+    }
+    return false;
+  };
+  const byId = new Map([...grid.values()].map((h) => [h.id, h]));
+  const cuts: Array<[SeaHex, SeaHex]> = [];
+  for (const hex of grid.values()) {
+    for (const nid of hex.seaNeighbours) {
+      const nb = byId.get(nid)!;
+      if (hex.id < nb.id && !shareWater(hex, nb)) cuts.push([hex, nb]);
+    }
+  }
+  const unlink = (a: SeaHex, b: SeaHex) => {
+    a.seaNeighbours = a.seaNeighbours.filter((x) => x !== b.id);
+    b.seaNeighbours = b.seaNeighbours.filter((x) => x !== a.id);
+  };
+  for (const [a, b] of cuts) unlink(a, b);
+  for (let guard = 0; guard < 50; guard++) {
+    const all = [...grid.values()];
+    const start = all.reduce((m, h) => (h.seaNeighbours.length > m.seaNeighbours.length ? h : m), all[0]);
+    const seen = new Set([start.id]);
+    const queue = [start];
+    while (queue.length) {
+      for (const nid of queue.pop()!.seaNeighbours) {
+        if (!seen.has(nid)) {
+          seen.add(nid);
+          queue.push(byId.get(nid)!);
+        }
       }
     }
+    const restore = cuts.find(([a, b]) => seen.has(a.id) !== seen.has(b.id));
+    if (!restore) break;
+    restore[0].seaNeighbours.push(restore[1].id);
+    restore[1].seaNeighbours.push(restore[0].id);
   }
 
   // Perimeter sampling: ensure every coastal land is linked to every sea hex
@@ -1732,6 +1831,15 @@ function generateSeaHexes(): {
     else rz = -rx - ry;
     return grid.get(`${rx},${rz}`);
   }
+  // Probe just off each point of a coastline; every sea hex holding that
+  // open water borders the land. Borders between two land territories find
+  // no water and link nothing, so inland territories never count as coastal.
+  const COAST_PROBE = 9;
+  const PROBES: Array<[number, number]> = [
+    [COAST_PROBE, 0], [-COAST_PROBE, 0], [0, COAST_PROBE], [0, -COAST_PROBE],
+    [COAST_PROBE * 0.7, COAST_PROBE * 0.7], [-COAST_PROBE * 0.7, -COAST_PROBE * 0.7],
+    [COAST_PROBE * 0.7, -COAST_PROBE * 0.7], [-COAST_PROBE * 0.7, COAST_PROBE * 0.7],
+  ];
   const STEP = 25;
   for (const L of lands) {
     for (let i = 0; i < L.poly.length; i++) {
@@ -1743,11 +1851,14 @@ function generateSeaHexes(): {
       for (let s = 0; s <= steps; s++) {
         const t = s / steps;
         const px = x1 + dx * t, py = y1 + dy * t;
-        const hex = hexAt(px, py);
-        if (hex) {
-          hex.landNeighbours.add(L.id);
-          if (!landAdj[L.id]) landAdj[L.id] = new Set();
-          landAdj[L.id].add(hex.id);
+        for (const [ox, oy] of PROBES) {
+          const wx = px + ox, wy = py + oy;
+          if (findContainingLand(wx, wy, lands)) continue;
+          const hex = hexAt(wx, wy);
+          if (hex) {
+            hex.landNeighbours.add(L.id);
+            (landAdj[L.id] ??= new Set()).add(hex.id);
+          }
         }
       }
     }
@@ -1855,7 +1966,7 @@ export function createInitialState(): GameState {
       id: h.id,
       name: wrapped.has(h.id) ? `Sea ${seaCounter} (World Seam)` : `Sea ${seaCounter}`,
       points: h.points,
-      centroid: h.centre,
+      centroid: h.waterCentre,
       adjacent: [...h.seaNeighbours, ...h.landNeighbours],
       owner: "neutral",
       ipc: 0,
