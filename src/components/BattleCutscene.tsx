@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useGame, type DieRoll, type PendingBattle } from "@/game/store";
+import { useGame, type BombardEvent, type DieRoll, type PendingBattle } from "@/game/store";
 import { useSettings } from "@/game/settings";
 import { isAINation } from "@/game/control";
 import {
@@ -48,7 +48,7 @@ interface Actor {
   x: number;
   y: number;
   size: number;
-  roll?: { value: number; hit: boolean };
+  roll?: { value: number | string; hit: boolean };
   fireAt?: number;
   /** When a killing shot lands. */
   deathAt?: number;
@@ -364,6 +364,104 @@ function buildRoundScene(
   };
 }
 
+/** A stand-alone bombardment: the guns fire from range and nobody shoots back. */
+function buildBombardScene(prevGame: GameState, ev: BombardEvent): RoundScene | null {
+  const from = prevGame.territories[ev.fromId];
+  const target = prevGame.territories[ev.targetId];
+  if (!from || !target) return null;
+  const gunIds = new Set(ev.shots.map((s) => s.unitId));
+  const guns = from.units.filter((u) => gunIds.has(u.id));
+  const defenders = ev.targetUnits.filter((u) => u.owner !== ev.player);
+  const dead = new Set(ev.shots.flatMap((s) => s.killed));
+  const key = `bombard:${ev.id}`;
+  const seed = hash(key);
+  const rand = rng(seed);
+  const shownAtk = guns.slice(0, MAX_PER_SIDE);
+  const shownDef = pickShown(defenders, dead, new Set());
+  const actors = [...layoutSide(shownAtk, "att", rand), ...layoutSide(shownDef, "def", rand)];
+  const byId = new Map(actors.map((a) => [a.id, a]));
+  const defActors = actors.filter((a) => a.side === "def");
+
+  const shots: Shot[] = [];
+  const totalDice = ev.shots.reduce((n, s) => n + s.rolls.length, 0);
+  const span = Math.min(2.4, 0.5 + totalDice * 0.3);
+  let k = 0;
+  for (const s of ev.shots) {
+    const gun = byId.get(s.unitId) ?? null;
+    if (gun) {
+      gun.roll = { value: s.rolls.map((r) => r.roll).join("·"), hit: s.rolls.some((r) => r.hit) };
+    }
+    // Hand this gun's kills to its hitting dice in order; a howitzer's single
+    // hit can destroy several units at once.
+    const killed = s.killed.map((id) => byId.get(id)).filter((a): a is Actor => !!a);
+    const hitDice = s.rolls.filter((r) => r.hit).length;
+    let hitIndex = 0;
+    s.rolls.forEach((r) => {
+      const at = 0.7 + (totalDice > 1 ? (k / (totalDice - 1)) * span : 0) + rand() * 0.08;
+      if (gun && gun.fireAt === undefined) gun.fireAt = at;
+      k++;
+      const travel = 0.75;
+      let kills: Actor[] = [];
+      let impact: { x: number; y: number };
+      if (r.hit) {
+        kills =
+          hitIndex === hitDice - 1 ? killed.slice(hitIndex) : killed.slice(hitIndex, hitIndex + 1);
+        hitIndex++;
+        for (const a of kills) a.deathAt = at + travel;
+        const tgt = kills[0] ?? defActors[Math.floor(rand() * Math.max(1, defActors.length))];
+        impact = tgt ? { x: tgt.x, y: tgt.y } : { x: 0.8, y: 0.74 };
+        if (!kills.length && tgt) tgt.jolts.push(at + travel);
+      } else {
+        const tgt = defActors[Math.floor(rand() * Math.max(1, defActors.length))];
+        impact = {
+          x: (tgt ? tgt.x : 0.8) - (0.06 + rand() * 0.1),
+          y: (tgt ? tgt.y : 0.74) + 0.02 + rand() * 0.04,
+        };
+      }
+      shots.push({
+        from: gun,
+        side: "att",
+        at,
+        travel,
+        heavy: true,
+        bomb: false,
+        impact,
+        kills,
+        hit: r.hit,
+      });
+    });
+  }
+  const leftovers = defActors.filter((a) => dead.has(a.id) && a.deathAt === undefined);
+  const barrageAt = 0.7 + span + 0.4;
+  for (const a of leftovers) a.deathAt = barrageAt;
+  const lastImpact = Math.max(
+    leftovers.length ? barrageAt : 0,
+    ...shots.map((s) => s.at + s.travel),
+    0.8,
+  );
+  const summaryAt = lastImpact + 0.7;
+  const att = factionInfo(ev.player);
+  const def = factionInfo(
+    defendingFaction({ owner: target.owner, units: ev.targetUnits }, ev.player),
+  );
+  const wiped = defenders.length > 0 && defenders.every((u) => dead.has(u.id));
+  return {
+    key,
+    seed,
+    title: target.name,
+    subtitle: "Bombardment",
+    sea: target.isSea,
+    attacker: { ...att, lost: 0, hits: dead.size, hidden: guns.length - shownAtk.length },
+    defender: { ...def, lost: dead.size, hits: 0, hidden: defenders.length - shownDef.length },
+    actors,
+    shots,
+    barrage: { at: barrageAt, kills: leftovers },
+    summaryAt,
+    duration: summaryAt + (wiped ? 2.1 : 1.6),
+    outcome: wiped ? `${target.name} garrison destroyed` : null,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Component: watches for rolled rounds and plays them in order
 // ---------------------------------------------------------------------------
@@ -374,6 +472,16 @@ export function BattleCutscene() {
   useEffect(
     () =>
       useGame.subscribe((state, prev) => {
+        const ev = state.bombardEvent;
+        if (ev && ev !== prev.bombardEvent && useSettings.getState().cutscenes) {
+          const target = prev.game.territories[ev.targetId];
+          const owner = target ? defendingFaction(target, ev.player) : "neutral";
+          if (!isAINation(ev.player) || (owner !== "neutral" && !isAINation(owner))) {
+            const scene = buildBombardScene(prev.game, ev);
+            if (scene) setQueue((q) => [...q, scene].slice(-5));
+          }
+          return;
+        }
         const before = prev.pendingBattle;
         const after = state.pendingBattle;
         if (!before || !after) return;
@@ -940,7 +1048,11 @@ function CutscenePlayer({
   return (
     <div
       role="dialog"
-      aria-label={`Battle of ${scene.title}, ${scene.subtitle}`}
+      aria-label={
+        scene.subtitle === "Bombardment"
+          ? `Bombardment of ${scene.title}`
+          : `Battle of ${scene.title}, ${scene.subtitle}`
+      }
       className={
         "fixed inset-0 z-[58] cursor-pointer select-none overflow-hidden bg-black transition-opacity duration-300 " +
         (leaving ? "opacity-0" : "animate-[cutscene-in_0.3s_ease-out]")
@@ -949,7 +1061,8 @@ function CutscenePlayer({
       <canvas ref={canvasRef} className="absolute inset-0 h-full w-full" />
       <div className="absolute inset-x-0 top-0 flex h-[14%] min-h-16 animate-[bar-top_0.4s_ease-out] flex-col items-center justify-end bg-black pb-2 pt-[env(safe-area-inset-top)]">
         <div className="text-[10px] uppercase tracking-[0.5em] text-amber-200/70 sm:text-xs">
-          ⚔ Battle of {scene.title}
+          {scene.subtitle === "Bombardment" ? "💥 Shelling" : "⚔ Battle of"}{" "}
+          {scene.subtitle === "Bombardment" ? `of ${scene.title}` : scene.title}
         </div>
         <div className="animate-[title-in_0.7s_ease-out] px-4 text-center font-serif text-2xl font-bold uppercase tracking-[0.18em] text-amber-50 sm:text-4xl">
           {scene.subtitle}

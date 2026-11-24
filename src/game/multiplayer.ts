@@ -56,6 +56,7 @@ interface Snapshot {
   game: GameState;
   pendingBattle: unknown;
   mapAnimation: unknown;
+  bombardEvent?: unknown;
   turnSecondsLeft: number;
   paused: boolean;
 }
@@ -199,6 +200,7 @@ function snapshot(): Snapshot {
     game: slimGame(s.game),
     pendingBattle: s.pendingBattle,
     mapAnimation: s.mapAnimation,
+    bombardEvent: s.bombardEvent,
     turnSecondsLeft: s.turnSecondsLeft,
     paused: s.paused,
   };
@@ -215,6 +217,7 @@ function applySnapshot(snap: Snapshot): boolean {
       game,
       pendingBattle: snap.pendingBattle as typeof local.pendingBattle,
       mapAnimation: snap.mapAnimation as typeof local.mapAnimation,
+      bombardEvent: (snap.bombardEvent ?? null) as typeof local.bombardEvent,
       turnSecondsLeft: snap.turnSecondsLeft,
       paused: snap.paused,
       // Someone else's move can invalidate what this player had selected.
@@ -546,7 +549,8 @@ if (typeof window !== "undefined") {
     const gameChanged =
       state.game !== prev.game ||
       state.pendingBattle !== prev.pendingBattle ||
-      state.mapAnimation !== prev.mapAnimation;
+      state.mapAnimation !== prev.mapAnimation ||
+      state.bombardEvent !== prev.bombardEvent;
     if (gameChanged) {
       // Coalesce bursts (AI turns, battle rounds) into one message.
       if (!sendTimer) sendTimer = setTimeout(flushOutgoing, 120);

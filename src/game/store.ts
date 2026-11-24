@@ -86,6 +86,28 @@ export interface PendingBattle {
   retreatTriedAfterRound?: number;
 }
 
+/** One gun's fire in a stand-alone bombardment. */
+export interface BombardShot {
+  unitId: string;
+  type: UnitType;
+  /** Each die thrown (a battleship throws several) and whether it hit. */
+  rolls: Array<{ roll: number; hit: boolean }>;
+  target: number;
+  /** Units this gun destroyed. */
+  killed: string[];
+}
+
+/** A completed bombardment, kept so the cut scene can replay it. */
+export interface BombardEvent {
+  id: number;
+  fromId: string;
+  targetId: string;
+  player: Nation;
+  /** The target's units just before the guns fired. */
+  targetUnits: Unit[];
+  shots: BombardShot[];
+}
+
 export type MapAnimationKind = "march" | "attack" | "retreat" | "capture";
 
 export interface MapAnimationUnit {
@@ -129,6 +151,8 @@ interface Store extends UIState {
   moveDialog: MoveDialogState | null;
   mapAnimation: MapAnimationEvent | null;
   aiTurnInProgress: boolean;
+  /** The most recent stand-alone bombardment (for its cut scene). */
+  bombardEvent: BombardEvent | null;
   /** When true, clicking a highlighted enemy tile on the map bombards it. */
   bombardTargeting: boolean;
   setBombardTargeting: (on: boolean) => void;
@@ -805,6 +829,7 @@ export const useGame = create<Store>((set, get) => ({
   moveDialog: null,
   mapAnimation: null,
   aiTurnInProgress: false,
+  bombardEvent: null,
   bombardTargeting: false,
   setBombardTargeting: (on) => set({ bombardTargeting: on }),
   turnSecondsLeft: savedCampaign?.turnSecondsLeft ?? TURN_SECONDS,
@@ -1782,6 +1807,8 @@ export const useGame = create<Store>((set, get) => ({
     const spotted = hasSpotter(next, targetId, player);
     const lines: string[] = [];
     let lost = 0;
+    const targetUnits: Unit[] = JSON.parse(JSON.stringify(nTo.units));
+    const shots: BombardShot[] = [];
     for (const u of allowed) {
       const gun = nFrom.units.find((x) => x.id === u.id);
       if (gun) {
@@ -1792,6 +1819,8 @@ export const useGame = create<Store>((set, get) => ({
       const pool = bombardablePool(nTo, player, u.type);
       if (pool.length === 0) continue;
       let kills = 0;
+      const shot: BombardShot = { unitId: u.id, type: u.type, rolls: [], target: 0, killed: [] };
+      shots.push(shot);
       if (u.type === "battleship" && !rough) {
         // Battleship: D4 for how many land units can be hit, then D6 (1-4) each.
         const n = d4();
@@ -1800,7 +1829,9 @@ export const useGame = create<Store>((set, get) => ({
           const r = d6();
           rolls.push(r);
           if (r <= 4) kills++;
+          shot.rolls.push({ roll: r, hit: r <= 4 });
         }
+        shot.target = 4;
         lines.push(`Bb D4=${n} [${rolls.join(",")}] ×${kills}`);
       } else {
         const roll = d6();
@@ -1810,6 +1841,8 @@ export const useGame = create<Store>((set, get) => ({
             : Math.min(6, UNIT_STATS[u.type].bombard + (u.type === "artillery" && spotted ? 1 : 0));
         const hit = roll <= tgt;
         kills = hit ? 1 : 0;
+        shot.rolls.push({ roll, hit });
+        shot.target = tgt;
         // D4 multi-kills never apply to mountain/jungle targets or naval targets.
         if (hit && u.type === "howitzer" && !rough && !nTo.isSea) kills = d4();
         lines.push(`${UNIT_STATS[u.type].short} ${roll}/${tgt}${hit ? ` ✔×${kills}` : " ✘"}`);
@@ -1818,6 +1851,7 @@ export const useGame = create<Store>((set, get) => ({
         const dead = orderedCasualties(pool, kills, new Set());
         nTo.units = nTo.units.filter((x) => !dead.has(x.id));
         lost += dead.size;
+        shot.killed = [...dead];
       }
     }
     log(next, `Bombardment of ${nTo.name} — ${lines.join(", ")} — ${lost} unit(s) destroyed.`);
@@ -1826,6 +1860,9 @@ export const useGame = create<Store>((set, get) => ({
       selectedUnitIds: [],
       bombardTargeting: false,
       mapAnimation: mapAnimation("attack", selectedTerritoryId, targetId, allowed),
+      bombardEvent: shots.length
+        ? { id: Date.now() + Math.random(), fromId: selectedTerritoryId, targetId, player, targetUnits, shots }
+        : null,
     });
   },
 
