@@ -142,3 +142,160 @@ export function loadSavedCampaign(): (SavedSnapshot & { game: GameState }) | nul
     return null;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Named save slots — any number of campaigns, kept in this browser, plus
+// export/import as a file to move a save between computers or players.
+// ---------------------------------------------------------------------------
+
+const SLOTS_INDEX_KEY = "aa-save-slots-v1";
+const slotKey = (id: string) => `aa-save-slot-${id}`;
+
+export interface SaveSlotInfo {
+  id: string;
+  name: string;
+  savedAt: number;
+  turn: number;
+  day: number;
+  currentPlayer: string;
+}
+
+interface SlotFile {
+  format: "aa-campaign-save";
+  version: number;
+  name: string;
+  savedAt: number;
+  turnSecondsLeft: number;
+  paused: boolean;
+  game: GameState;
+}
+
+function readIndex(): SaveSlotInfo[] {
+  try {
+    const list = JSON.parse(window.localStorage.getItem(SLOTS_INDEX_KEY) ?? "[]");
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeIndex(list: SaveSlotInfo[]): void {
+  window.localStorage.setItem(SLOTS_INDEX_KEY, JSON.stringify(list));
+}
+
+export function listSaveSlots(): SaveSlotInfo[] {
+  if (typeof window === "undefined") return [];
+  return readIndex().sort((a, b) => b.savedAt - a.savedAt);
+}
+
+/**
+ * Save the game to a slot (a new one, or over `overwriteId`). Returns an
+ * error message when the browser refuses (usually storage full).
+ */
+export function saveToSlot(
+  name: string,
+  game: GameState,
+  turnSecondsLeft: number,
+  paused: boolean,
+  overwriteId?: string,
+): { ok: true; id: string } | { ok: false; error: string } {
+  const id = overwriteId ?? `s${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+  const savedAt = Date.now();
+  const file: SlotFile = {
+    format: "aa-campaign-save",
+    version: SAVE_VERSION,
+    name: name.trim() || "Untitled campaign",
+    savedAt,
+    turnSecondsLeft,
+    paused,
+    game: slimGame(game),
+  };
+  try {
+    window.localStorage.setItem(slotKey(id), JSON.stringify(file));
+    const info: SaveSlotInfo = {
+      id,
+      name: file.name,
+      savedAt,
+      turn: game.turn,
+      day: game.day,
+      currentPlayer: game.currentPlayer,
+    };
+    writeIndex([...readIndex().filter((s) => s.id !== id), info]);
+    return { ok: true, id };
+  } catch {
+    return {
+      ok: false,
+      error: "This browser's storage is full. Delete or download an old save, then try again.",
+    };
+  }
+}
+
+function parseSlotFile(text: string): SlotFile | null {
+  try {
+    const data = JSON.parse(text);
+    if (data?.format !== "aa-campaign-save" || !data.game?.territories) return null;
+    return data as SlotFile;
+  } catch {
+    return null;
+  }
+}
+
+export function loadFromSlot(
+  id: string,
+): { game: GameState; turnSecondsLeft: number; paused: boolean; name: string } | null {
+  try {
+    const file = parseSlotFile(window.localStorage.getItem(slotKey(id)) ?? "");
+    if (!file) return null;
+    const game = rehydrateGame(file.game);
+    if (!game) return null;
+    return {
+      game,
+      turnSecondsLeft: file.turnSecondsLeft > 0 ? file.turnSecondsLeft : TURN_SECONDS,
+      paused: !!file.paused,
+      name: file.name,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function deleteSlot(id: string): void {
+  try {
+    window.localStorage.removeItem(slotKey(id));
+    writeIndex(readIndex().filter((s) => s.id !== id));
+  } catch {
+    // ignore
+  }
+}
+
+export function renameSlot(id: string, name: string): void {
+  try {
+    const file = parseSlotFile(window.localStorage.getItem(slotKey(id)) ?? "");
+    if (!file) return;
+    file.name = name.trim() || file.name;
+    window.localStorage.setItem(slotKey(id), JSON.stringify(file));
+    writeIndex(readIndex().map((s) => (s.id === id ? { ...s, name: file.name } : s)));
+  } catch {
+    // ignore
+  }
+}
+
+/** The save as a JSON file's text, for downloading. */
+export function exportSlot(id: string): { name: string; text: string } | null {
+  try {
+    const text = window.localStorage.getItem(slotKey(id));
+    const file = text ? parseSlotFile(text) : null;
+    return file && text ? { name: file.name, text } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Add a downloaded save file as a new slot. */
+export function importSaveFile(text: string): { ok: true; id: string } | { ok: false; error: string } {
+  const file = parseSlotFile(text);
+  if (!file) return { ok: false, error: "That file isn't an A&A campaign save." };
+  const game = rehydrateGame(file.game);
+  if (!game) return { ok: false, error: "That save doesn't fit this version of the map." };
+  return saveToSlot(file.name, game, file.turnSecondsLeft, file.paused);
+}

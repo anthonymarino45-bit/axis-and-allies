@@ -669,6 +669,12 @@ function installGuards() {
     if (useNet.getState().mode === "guest") return send(hostConn, { t: "pause" });
     return pause();
   };
+  // In an online room only the host may swap in a different campaign.
+  const loadCampaign = state.loadCampaign;
+  patch.loadCampaign = (...args) => {
+    if (useNet.getState().mode === "guest") return undefined;
+    return (loadCampaign as AnyFn)(...args);
+  };
   const reset = state.reset;
   patch.reset = () => {
     if (useNet.getState().mode === "guest") return undefined;

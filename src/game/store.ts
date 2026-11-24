@@ -204,6 +204,8 @@ interface Store extends UIState {
   airdropCargo: (carrierId: string, targetId: string) => void;
   piracyRaid: (targetUnitId: string, mode: "dump" | "capture") => void;
   saveGameNow: () => void;
+  /** Replace the whole campaign with a loaded save. */
+  loadCampaign: (game: GameState, turnSecondsLeft: number, paused: boolean) => void;
   reset: () => void;
   runAITurn: () => Promise<void>;
   kamikazeStrike: (targetId: string) => void;
@@ -2605,6 +2607,22 @@ export const useGame = create<Store>((set, get) => ({
     }
     nRaider.movedThisTurn = true;
     set({ game: next, selectedUnitIds: [] });
+  },
+
+  loadCampaign: (game, turnSecondsLeft, paused) => {
+    if (get().aiTurnInProgress) return;
+    set({
+      game,
+      turnSecondsLeft,
+      paused,
+      pendingBattle: null,
+      moveDialog: null,
+      mapAnimation: null,
+      bombardEvent: null,
+      selectedTerritoryId: null,
+      selectedUnitIds: [],
+      bombardTargeting: false,
+    });
   },
 
   saveGameNow: () => {

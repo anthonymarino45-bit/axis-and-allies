@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useGame } from "@/game/store";
 import { NATIONS, PLAYER_ORDER } from "@/game/types";
 import { inviteLink, normalizeRoomCode, useNet } from "@/game/multiplayer";
+import { useSavesPanel } from "@/components/SavesPanel";
 
 /** Floating "Multiplayer" button plus the host / join / seats dialog. */
 export function MultiplayerPanel() {
@@ -30,6 +31,17 @@ export function MultiplayerPanel() {
       >
         🌐 {mode === "local" ? "Multiplayer" : `Room ${roomCode}`}
         {mode !== "local" && <span className="h-2 w-2 rounded-full bg-green-600" aria-hidden />}
+      </button>
+      <button
+        type="button"
+        onClick={() => useSavesPanel.getState().setOpen(true)}
+        aria-label="Open saved games"
+        className={
+          "fixed top-3 z-40 flex items-center gap-1.5 rounded-md border border-border bg-background/90 px-3 py-2 text-xs font-semibold shadow-lg backdrop-blur hover:bg-muted " +
+          (mode === "local" ? "left-[14.5rem]" : "left-[15.5rem]")
+        }
+      >
+        💾 Saves
       </button>
 
       {open && (

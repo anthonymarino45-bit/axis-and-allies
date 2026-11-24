@@ -45,6 +45,7 @@ import {
 import { useCanAct, useNet } from "@/game/multiplayer";
 import { OnlineTurnBanner } from "@/components/MultiplayerPanel";
 import { RecruitPanel } from "@/components/RecruitPanel";
+import { useSavesPanel } from "@/components/SavesPanel";
 import { GROUND_CARRIER_CAPACITY, ABOMB_RANGE, ABOMB_BLUEPRINTS_REQUIRED } from "@/game/types";
 
 
@@ -1267,9 +1268,12 @@ export function CommandPanel() {
               : "End Turn"}
         </button>
         <button
-          onClick={saveGameNow}
-          disabled={aiTurnInProgress}
-          title="Save the campaign — the game also saves itself automatically"
+          onClick={() => {
+            saveGameNow();
+            useSavesPanel.getState().setOpen(true);
+          }}
+          aria-label="Saved games"
+          title="Save, load, download or import games (your current game also autosaves)"
           className="rounded border border-border bg-secondary px-3 py-2 text-xs font-semibold uppercase tracking-wider hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40"
         >
           💾

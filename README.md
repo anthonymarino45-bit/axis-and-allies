@@ -17,6 +17,13 @@ Players connect peer-to-peer through the free public PeerJS service — no accou
 To use your own PeerJS server instead, set `VITE_PEERJS_HOST`, `VITE_PEERJS_PORT`,
 `VITE_PEERJS_PATH` and `VITE_PEERJS_SECURE` at build time.
 
+## Saving games
+
+Click **💾 Saves** to save the current game under a name, then load, rename, delete or
+download it later. Downloaded saves are files you can import on another computer or send to a
+friend. In an online game every player can save a copy of the shared game; only the host can
+load a save into the room. The game in progress also autosaves, so a refresh never loses it.
+
 ## Development
 
 ```bash

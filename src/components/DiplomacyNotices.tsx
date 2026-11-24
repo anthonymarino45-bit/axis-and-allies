@@ -53,7 +53,7 @@ export function DiplomacyNotices() {
                 : `${to.flag} ${to.name} refused your ${describe(c)}.`,
           });
         }
-        for (const f of fresh) useNotices.getState().push(f.text, f.good ? "good" : "bad", 7000);
+        for (const f of fresh) useNotices.getState().push(`${f.good ? "🤝" : "✋"} ${f.text}`, f.good ? "good" : "bad", 7000);
       }),
     [],
   );
@@ -113,7 +113,6 @@ export function DiplomacyNotices() {
                 : "border-amber-700/40 bg-amber-50 text-amber-950")
           }
         >
-          {n.tone === "good" ? "🤝 " : n.tone === "bad" ? "✋ " : ""}
           {n.text}
         </div>
       ))}
