@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
+import { useNotices } from "@/game/notices";
 import { useGame } from "@/game/store";
 import { useNet } from "@/game/multiplayer";
 import { AI_NATIONS, CONTRACT_KINDS, NATIONS, type Contract, type Nation } from "@/game/types";
@@ -10,12 +11,6 @@ import { AI_NATIONS, CONTRACT_KINDS, NATIONS, type Contract, type Nation } from 
  *  - whoever made an offer is told when it is signed or refused, whether the
  *    answer came from the AI or another player
  */
-
-interface Notice {
-  id: string;
-  text: string;
-  good: boolean;
-}
 
 /** Is this nation played by the person at this screen? */
 function playedHere(n: Nation): boolean {
@@ -35,14 +30,14 @@ export function DiplomacyNotices() {
   // Re-render when seats change so off-turn offers show for the right player.
   useNet((s) => s.seats);
   useNet((s) => s.mode);
-  const [notices, setNotices] = useState<Notice[]>([]);
+  const notices = useNotices((s) => s.notices);
 
   useEffect(
     () =>
       useGame.subscribe((state, prev) => {
         if (state.game.contracts === prev.game.contracts) return;
         const before = new Map(prev.game.contracts.map((c) => [c.id, c]));
-        const fresh: Notice[] = [];
+        const fresh: Array<{ text: string; good: boolean }> = [];
         for (const c of state.game.contracts) {
           const old = before.get(c.id);
           const answered = c.status === "active" || c.status === "declined";
@@ -51,7 +46,6 @@ export function DiplomacyNotices() {
           if (!playedHere(c.from)) continue;
           const to = NATIONS[c.to];
           fresh.push({
-            id: `${c.id}:${c.status}`,
             good: c.status === "active",
             text:
               c.status === "active"
@@ -59,11 +53,7 @@ export function DiplomacyNotices() {
                 : `${to.flag} ${to.name} refused your ${describe(c)}.`,
           });
         }
-        if (!fresh.length) return;
-        setNotices((n) => [...n, ...fresh].slice(-4));
-        for (const f of fresh) {
-          window.setTimeout(() => setNotices((n) => n.filter((x) => x.id !== f.id)), 7000);
-        }
+        for (const f of fresh) useNotices.getState().push(f.text, f.good ? "good" : "bad", 7000);
       }),
     [],
   );
@@ -116,10 +106,14 @@ export function DiplomacyNotices() {
           role="status"
           className={
             "pointer-events-auto w-full max-w-md rounded-md border px-4 py-2 text-sm font-semibold shadow-lg " +
-            (n.good ? "border-green-700/40 bg-green-50 text-green-900" : "border-red-700/40 bg-red-50 text-red-900")
+            (n.tone === "good"
+              ? "border-green-700/40 bg-green-50 text-green-900"
+              : n.tone === "bad"
+                ? "border-red-700/40 bg-red-50 text-red-900"
+                : "border-amber-700/40 bg-amber-50 text-amber-950")
           }
         >
-          {n.good ? "🤝 " : "✋ "}
+          {n.tone === "good" ? "🤝 " : n.tone === "bad" ? "✋ " : ""}
           {n.text}
         </div>
       ))}

@@ -49,6 +49,10 @@ interface Actor {
   y: number;
   size: number;
   roll?: { value: number | string; hit: boolean };
+  /** Several dice shown one by one as they are thrown (battleship shots). */
+  dice?: Array<{ value: number; hit: boolean; at: number }>;
+  /** A battleship's D4: how many shots it gets. */
+  d4?: { value: number; at: number };
   fireAt?: number;
   /** When a killing shot lands. */
   deathAt?: number;
@@ -91,6 +95,8 @@ interface RoundScene {
   summaryAt: number;
   duration: number;
   outcome: string | null;
+  /** A line explaining special dice, shown under the title. */
+  caption?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -385,11 +391,19 @@ function buildBombardScene(prevGame: GameState, ev: BombardEvent): RoundScene | 
   const shots: Shot[] = [];
   const totalDice = ev.shots.reduce((n, s) => n + s.rolls.length, 0);
   const span = Math.min(2.4, 0.5 + totalDice * 0.3);
+  // Battleships first roll a D4 for their number of shots; give it a moment.
+  const hasD4 = ev.shots.some((s) => s.d4 !== undefined);
+  const start = hasD4 ? 1.6 : 0.7;
   let k = 0;
   for (const s of ev.shots) {
     const gun = byId.get(s.unitId) ?? null;
     if (gun) {
-      gun.roll = { value: s.rolls.map((r) => r.roll).join("·"), hit: s.rolls.some((r) => r.hit) };
+      if (s.d4 !== undefined) {
+        gun.d4 = { value: s.d4, at: 0.45 };
+        gun.dice = [];
+      } else {
+        gun.roll = { value: s.rolls.map((r) => r.roll).join("·"), hit: s.rolls.some((r) => r.hit) };
+      }
     }
     // Hand this gun's kills to its hitting dice in order; a howitzer's single
     // hit can destroy several units at once.
@@ -397,8 +411,9 @@ function buildBombardScene(prevGame: GameState, ev: BombardEvent): RoundScene | 
     const hitDice = s.rolls.filter((r) => r.hit).length;
     let hitIndex = 0;
     s.rolls.forEach((r) => {
-      const at = 0.7 + (totalDice > 1 ? (k / (totalDice - 1)) * span : 0) + rand() * 0.08;
+      const at = start + (totalDice > 1 ? (k / (totalDice - 1)) * span : 0) + rand() * 0.08;
       if (gun && gun.fireAt === undefined) gun.fireAt = at;
+      gun?.dice?.push({ value: r.roll, hit: r.hit, at });
       k++;
       const travel = 0.75;
       let kills: Actor[] = [];
@@ -432,7 +447,7 @@ function buildBombardScene(prevGame: GameState, ev: BombardEvent): RoundScene | 
     });
   }
   const leftovers = defActors.filter((a) => dead.has(a.id) && a.deathAt === undefined);
-  const barrageAt = 0.7 + span + 0.4;
+  const barrageAt = start + span + 0.4;
   for (const a of leftovers) a.deathAt = barrageAt;
   const lastImpact = Math.max(
     leftovers.length ? barrageAt : 0,
@@ -459,6 +474,15 @@ function buildBombardScene(prevGame: GameState, ev: BombardEvent): RoundScene | 
     summaryAt,
     duration: summaryAt + (wiped ? 2.1 : 1.6),
     outcome: wiped ? `${target.name} garrison destroyed` : null,
+    caption: hasD4
+      ? ev.shots
+          .filter((s) => s.d4 !== undefined)
+          .map(
+            (s) =>
+              `Battleship rolls a D4 = ${s.d4} → ${s.d4} shot${s.d4 === 1 ? "" : "s"}, each hits on 1–4`,
+          )
+          .join(" · ")
+      : undefined,
   };
 }
 
@@ -826,6 +850,57 @@ function CutscenePlayer({
       const px = x * W;
       const s = a.size * H;
       const dead = a.deathAt !== undefined && t >= a.deathAt;
+      const box0 = Math.max(20, Math.min(30, H * 0.034));
+      // A battleship's D4 (a triangle, like the die) and then its shots one by one.
+      if (a.d4 && t >= a.d4.at) {
+        const k = Math.min(1, (t - a.d4.at) / 0.2);
+        const size = box0 * 1.5 * (0.6 + 0.4 * k);
+        const top = y * H - s * 0.55 - box0 - 10 - size;
+        ctx.save();
+        ctx.fillStyle = "#7a4a12";
+        ctx.strokeStyle = "#ffd58a";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(px, top);
+        ctx.lineTo(px + size * 0.58, top + size);
+        ctx.lineTo(px - size * 0.58, top + size);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = "#fff";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.font = `800 ${Math.round(size * 0.45)}px ui-monospace, Menlo, monospace`;
+        ctx.fillText(String(a.d4.value), px, top + size * 0.66);
+        ctx.font = `700 ${Math.round(box0 * 0.42)}px ui-monospace, Menlo, monospace`;
+        ctx.textAlign = "left";
+        ctx.fillStyle = "#ffe3ad";
+        ctx.fillText(`D4 → ${a.d4.value} shot${a.d4.value === 1 ? "" : "s"}`, px + size * 0.7, top + size * 0.6);
+        ctx.restore();
+      }
+      if (a.dice?.length) {
+        const shown = a.dice.filter((d) => t >= d.at - 0.05);
+        const gap = 4;
+        const rowW = a.dice.length * box0 + (a.dice.length - 1) * gap;
+        shown.forEach((d, i) => {
+          const bx = px - rowW / 2 + i * (box0 + gap);
+          const by = y * H - s * 0.55 - box0;
+          ctx.save();
+          ctx.fillStyle = d.hit ? "#2f7d3a" : "rgba(30,26,22,0.9)";
+          ctx.strokeStyle = d.hit ? "#bdf0b0" : "rgba(255,255,255,0.35)";
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.roundRect(bx, by, box0, box0, 5);
+          ctx.fill();
+          ctx.stroke();
+          ctx.fillStyle = "#fff";
+          ctx.font = `700 ${Math.round(box0 * 0.62)}px ui-monospace, Menlo, monospace`;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText(String(d.value), bx + box0 / 2, by + box0 / 2 + 1);
+          ctx.restore();
+        });
+      }
       // Die roll above each unit that fired.
       if (a.roll && a.fireAt !== undefined && t >= a.fireAt - 0.05 && !(a.air && dead)) {
         const k = Math.min(1, (t - a.fireAt + 0.05) / 0.15);
@@ -1077,6 +1152,14 @@ function CutscenePlayer({
       {d.hidden > 0 && (
         <div className="absolute right-4 top-[16%] text-xs text-white/60">
           +{d.hidden} more not shown
+        </div>
+      )}
+
+      {scene.caption && (
+        <div className="absolute inset-x-0 top-[15%] flex justify-center px-4">
+          <div className="rounded border border-amber-200/40 bg-black/70 px-4 py-1.5 text-center font-mono text-xs text-amber-100 sm:text-sm">
+            {scene.caption}
+          </div>
         </div>
       )}
 

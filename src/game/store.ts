@@ -90,6 +90,8 @@ export interface BombardShot {
   type: UnitType;
   /** Each die thrown (a battleship throws several) and whether it hit. */
   rolls: Array<{ roll: number; hit: boolean }>;
+  /** Battleships first roll a D4: how many shots (land units it may hit). */
+  d4?: number;
   target: number;
   /** Units this gun destroyed. */
   killed: string[];
@@ -1905,7 +1907,10 @@ export const useGame = create<Store>((set, get) => ({
           shot.rolls.push({ roll: r, hit: r <= 4 });
         }
         shot.target = 4;
-        lines.push(`Bb D4=${n} [${rolls.join(",")}] ×${kills}`);
+        shot.d4 = n;
+        lines.push(
+          `Battleship rolled a D4: ${n} shot${n === 1 ? "" : "s"} — ${rolls.join(", ")} (hit on 1-4) → ${kills} hit${kills === 1 ? "" : "s"}`,
+        );
       } else {
         const roll = d6();
         const tgt =

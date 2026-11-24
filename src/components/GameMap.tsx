@@ -1,7 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useGame, getReachable, canBombardNow, bombardTargetsFor } from "@/game/store";
 import type { MapAnimationEvent } from "@/game/store";
-import { MAP_VIEWBOX, UNIT_STATS, NATIONS, STRUCTURE_STATS, TERRAIN_INFO } from "@/game/types";
+import {
+  MAP_VIEWBOX, UNIT_STATS, NATIONS, STRUCTURE_STATS, TERRAIN_INFO,
+  ROUGH_TERRAIN_UNITS, DESERT_VEHICLES, isAir, isNaval,
+} from "@/game/types";
+import { useNotices } from "@/game/notices";
 import type { Territory, UnitType } from "@/game/types";
 import { UNIT_ICONS } from "@/game/unitIcons";
 
@@ -169,7 +173,37 @@ export function GameMap() {
       return;
     }
     if (reachable.has(id)) openMoveDialog(id);
-    else selectTerritory(id);
+    else {
+      // Explain a move the terrain forbids instead of silently selecting.
+      const reason = terrainBlockReason(id);
+      if (reason) useNotices.getState().push(reason);
+      else selectTerritory(id);
+    }
+  };
+
+  /** Why the selected units can't enter a neighbouring territory, if terrain is the reason. */
+  const terrainBlockReason = (id: string): string | null => {
+    const { selectedTerritoryId: fromId, selectedUnitIds: ids, game: g } = useGame.getState();
+    if (!fromId || !ids.length || fromId === id) return null;
+    const from = g.territories[fromId];
+    const dest = g.territories[id];
+    if (!from || !dest || dest.isSea || !dest.terrain || !from.adjacent.includes(id)) return null;
+    const pool = [...from.units, ...from.units.flatMap((u) => u.cargo ?? [])];
+    const units = pool.filter((u) => ids.includes(u.id) && !isAir(u.type) && !isNaval(u.type));
+    const info = TERRAIN_INFO[dest.terrain];
+    const names = (list: typeof units) =>
+      [...new Set(list.map((u) => UNIT_STATS[u.type].label))].join(", ");
+    if (dest.terrain === "mountain" || dest.terrain === "jungle") {
+      const blocked = units.filter((u) => !ROUGH_TERRAIN_UNITS.has(u.type));
+      if (!blocked.length) return null;
+      return `${info.icon} ${dest.name} is ${info.label.toLowerCase()}: only Infantry, Anti-Air and Zeppelins can enter. ${names(blocked)} can't go there — select just the units that can.`;
+    }
+    if (dest.terrain === "desert") {
+      const blocked = units.filter((u) => DESERT_VEHICLES.has(u.type));
+      if (!blocked.length) return null;
+      return `${info.icon} ${dest.name} is desert: ${names(blocked)} can drive through it but can't stop there.`;
+    }
+    return null;
   };
 
   return (
