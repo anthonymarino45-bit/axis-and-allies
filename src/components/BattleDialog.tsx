@@ -89,9 +89,14 @@ export function BattleDialog() {
   const lastRound = pendingBattle.rounds[pendingBattle.rounds.length - 1];
 
   const attackerCounts = rosterCounts(pendingBattle.attackerUnitIds, from.units);
+  // Only enemies defend (in a sea zone our own ships may share the hex).
+  const defendingUnits = to.units.filter((u) => u.owner !== game.currentPlayer);
+  // A sea zone has no owner: name the nation whose ships are defending it.
+  const defenderSide =
+    to.isSea || to.owner === "neutral" ? (defendingUnits[0]?.owner ?? to.owner) : to.owner;
   const defenderCounts = rosterCounts(
-    to.units.map((u) => u.id),
-    to.units,
+    defendingUnits.map((u) => u.id),
+    defendingUnits,
   );
 
   const ongoing = pendingBattle.status === "ongoing";
@@ -138,10 +143,10 @@ export function BattleDialog() {
             <div
               className="text-[10px] font-bold uppercase tracking-widest"
               style={{
-                color: to.owner === "neutral" ? "var(--muted-foreground)" : NATIONS[to.owner].color,
+                color: defenderSide === "neutral" ? "var(--muted-foreground)" : NATIONS[defenderSide].color,
               }}
             >
-              Defenders · {factionName(to.owner)} · {to.name}
+              Defenders · {factionName(defenderSide)} · {to.name}
             </div>
             <div className="mt-2">
               <RosterLine counts={defenderCounts} />
@@ -224,8 +229,8 @@ export function BattleDialog() {
             </div>
             <div className="mt-1 text-sm">
               <b>{pendingBattle.attackerUnitIds.length}</b> attacking unit
-              {pendingBattle.attackerUnitIds.length === 1 ? "" : "s"} vs <b>{to.units.length}</b>{" "}
-              defending unit{to.units.length === 1 ? "" : "s"} remain. Press the attack, or withdraw
+              {pendingBattle.attackerUnitIds.length === 1 ? "" : "s"} vs <b>{defendingUnits.length}</b>{" "}
+              defending unit{defendingUnits.length === 1 ? "" : "s"} remain. Press the attack, or withdraw
               your surviving attackers — no roll, no penalty.
             </div>
           </div>

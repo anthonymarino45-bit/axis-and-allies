@@ -1060,11 +1060,15 @@ export const useGame = create<Store>((set, get) => ({
       moving.every((u) => isLand(u.type));
     const extras: NonNullable<MoveDialogState["extras"]> = [];
     if (isAttack) {
+      const movingIds = new Set(moving.map((u) => u.id));
       for (const other of Object.values(game.territories)) {
-        if (other.id === from.id || other.isSea || other.owner !== player) continue;
+        if (other.isSea || other.owner !== player) continue;
+        // Land units from neighbouring territories; aircraft from anywhere in
+        // range (including planes based in the attacking territory itself).
         const ready = other.units.filter(
           (u) =>
-            u.owner === player && !u.movedThisTurn && movesLeft(u) > 0 && isLand(u.type) &&
+            u.owner === player && !u.movedThisTurn && movesLeft(u) > 0 && !movingIds.has(u.id) &&
+            (isAir(u.type) || (isLand(u.type) && other.id !== from.id)) &&
             legalMoveTargets(game, other.id, [u]).has(to.id),
         );
         if (!ready.length) continue;
@@ -1236,8 +1240,10 @@ export const useGame = create<Store>((set, get) => ({
     }
 
     // ===== Standard move (land→land, naval→sea, air anywhere) =====
+    // A fleet sailing into a sea zone held by enemy ships starts a naval battle.
+    const enemyShips = toN.isSea && kind === "naval" && toN.units.some((u) => u.owner !== player && u.owner !== "neutral");
     const isEnemyHeld =
-      toN.owner !== "neutral" && toN.owner !== player && toN.units.length > 0;
+      enemyShips || (toN.owner !== "neutral" && toN.owner !== player && toN.units.length > 0);
     const isEnemyTerritory =
       toN.owner !== "neutral" && toN.owner !== player;
 
@@ -1322,7 +1328,8 @@ export const useGame = create<Store>((set, get) => ({
       opening = resolveOpeningFire(next, from, to, attackerIds);
       attackerIds = attackerIds.filter((id) => from.units.some((u) => u.id === id));
       for (const note of opening.notes) log(next, note);
-      if (to.units.length === 0 && attackerIds.length > 0) {
+      const enemiesLeft = to.units.filter((u) => u.owner !== next.currentPlayer).length;
+      if (enemiesLeft === 0 && attackerIds.length > 0) {
         set({
           game: next,
           pendingBattle: { ...pendingBattle, attackerUnitIds: attackerIds, opening, status: "attacker-won" },
@@ -1335,7 +1342,7 @@ export const useGame = create<Store>((set, get) => ({
           game: next,
           pendingBattle: {
             ...pendingBattle, attackerUnitIds: [], opening,
-            status: to.units.length > 0 ? "defender-won" : "stalemate",
+            status: enemiesLeft > 0 ? "defender-won" : "stalemate",
           },
         });
         return;
@@ -1343,7 +1350,8 @@ export const useGame = create<Store>((set, get) => ({
     }
 
     const attackers = from.units.filter((u) => attackerIds.includes(u.id));
-    const defenders = [...to.units];
+    // Only the enemy defends — in a sea zone our own ships may already be there.
+    const defenders = to.units.filter((u) => u.owner !== next.currentPlayer);
 
     // ---------- Dogfight: while both sides have aircraft, only planes fire ----------
     const atkAir = attackers.filter((u) => isAir(u.type));
@@ -1407,9 +1415,10 @@ export const useGame = create<Store>((set, get) => ({
     const survivingAttackerIds = attackerIds.filter((id) => !deadAtk.has(id));
 
     let status: BattleStatus = "ongoing";
-    if (to.units.length === 0 && survivingAttackerIds.length > 0) status = "attacker-won";
-    else if (survivingAttackerIds.length === 0 && to.units.length > 0) status = "defender-won";
-    else if (survivingAttackerIds.length === 0 && to.units.length === 0) status = "stalemate";
+    const defendersLeft = to.units.filter((u) => u.owner !== next.currentPlayer).length;
+    if (defendersLeft === 0 && survivingAttackerIds.length > 0) status = "attacker-won";
+    else if (survivingAttackerIds.length === 0 && defendersLeft > 0) status = "defender-won";
+    else if (survivingAttackerIds.length === 0 && defendersLeft === 0) status = "stalemate";
 
     log(
       next,
@@ -1456,14 +1465,15 @@ export const useGame = create<Store>((set, get) => ({
       const movers = from.units.filter((u) => pendingBattle.attackerUnitIds.includes(u.id));
       from.units = from.units.filter((u) => !pendingBattle.attackerUnitIds.includes(u.id));
       // Each unit pays for the distance from where it actually set out.
-      to.units = movers.map((u) => {
+      const alreadyThere = to.units.filter((u) => u.owner === player);
+      to.units = [...alreadyThere, ...movers.map((u) => {
         const dist = Math.max(1, tileDistance(game, u.stagedFrom ?? from.id, to.id, 8));
         const { stagedFrom: _origin, ...rest } = spendMoves(u, dist);
         void _origin;
         return rest;
-      });
+      })];
       if (!to.isSea) captureTerritory(next, to, player);
-      log(next, `${NATIONS[player].name} captured ${to.name}.`);
+      log(next, to.isSea ? `${NATIONS[player].name} cleared ${to.name} of enemy ships.` : `${NATIONS[player].name} captured ${to.name}.`);
       nextSelectedId = to.id;
       resolvedAnimation = mapAnimation("capture", from.id, to.id, movers);
     } else if (pendingBattle.status === "retreated") {
@@ -2695,7 +2705,9 @@ export function getReachable(): Set<string> {
 // uses, so all rules (terrain, canals, multiplayer guards) still apply.
 // ---------------------------------------------------------------------------
 
-const AI_OFFENSE: UnitType[] = ["infantry", "tank", "infantry", "artillery", "tank"];
+const AI_OFFENSE: UnitType[] = [
+  "infantry", "tank", "fighter", "infantry", "artillery", "destroyer", "tank", "infantry", "bomber", "cruiser",
+];
 const AI_DEFENSE: UnitType[] = ["infantry", "infantry", "artillery"];
 
 async function aiPlayTurn(get: () => Store, _set: unknown): Promise<void> {
@@ -2704,6 +2716,26 @@ async function aiPlayTurn(get: () => Store, _set: unknown): Promise<void> {
   const player = get().game.currentPlayer as Nation;
   const owned = () =>
     Object.values(get().game.territories).filter((t) => t.owner === player && !t.isSea);
+
+  // ---------- Construction: an airfield and a harbor to build planes and ships ----------
+  if (get().game.turn >= 2) {
+    for (const t of owned()) {
+      const g = get().game;
+      const tt = g.territories[t.id];
+      if (!tt.hasFactory) continue;
+      const coastal = tt.adjacent.some((nid) => g.territories[nid]?.isSea);
+      const want: StructureType | null = !hasStructure(tt, "airfield")
+        ? "airfield"
+        : coastal && !hasStructure(tt, "harbor")
+          ? "harbor"
+          : null;
+      if (!want || g.treasury[player] < STRUCTURE_STATS[want].cost + 12) continue;
+      get().selectTerritory(t.id);
+      get().buildStructure(want);
+      await sleep(40);
+      break; // one a turn, so the army keeps growing
+    }
+  }
 
   // ---------- Construction: fortify the homeland when there is spare cash ----------
   {
@@ -2744,8 +2776,15 @@ async function aiPlayTurn(get: () => Store, _set: unknown): Promise<void> {
       // Shore up the most endangered factory first, then build to attack.
       const f = factories[0].gap > 0 ? factories[0] : factories[plan % factories.length];
       const list = f.gap > 0 ? AI_DEFENSE : AI_OFFENSE;
-      const want = list[plan % list.length];
+      let want = list[plan % list.length];
       plan++;
+      // Keep the navy to about a quarter of the forces; build ships only where they can sail.
+      if (isNaval(want)) {
+        const mine = Object.values(g.territories).flatMap((x) => x.units.filter((u) => u.owner === player));
+        const navy = mine.filter((u) => isNaval(u.type)).length;
+        if (navy > mine.length * 0.25) want = "tank";
+        if (want === "cruiser" && g.treasury[player] >= 45) want = "battleship";
+      }
       get().selectTerritory(f.t.id);
       const before = get().game.treasury[player];
       get().buyUnit(want);
@@ -2767,6 +2806,9 @@ async function aiPlayTurn(get: () => Store, _set: unknown): Promise<void> {
     }
   }
   await sleep(200);
+
+  // ---------- Navy: sink weaker enemy fleets, then shell enemy coasts ----------
+  await aiNavalTurn(get, player);
 
   // ---------- Attacks and expansion ----------
   const failed = new Set<string>();
@@ -2814,6 +2856,22 @@ async function aiPlayTurn(get: () => Store, _set: unknown): Promise<void> {
           if (t.owner !== "neutral" && partners.has(t.owner)) continue; // honour our treaties
           (reach.get(id) ?? reach.set(id, []).get(id)!).push(u);
         }
+      }
+      // Aircraft based here can join attacks anywhere within range.
+      const planes = src.units.filter(
+        (u) => u.owner === player && !u.movedThisTurn && movesLeft(u) > 0 && isAir(u.type) && UNIT_STATS[u.type].attack > 0,
+      );
+      if (planes.length) {
+        const byTarget = new Map<string, Unit[]>();
+        for (const u of planes) {
+          for (const id of legalMoveTargets(g, src.id, [u])) {
+            const t = g.territories[id];
+            if (!t || t.isSea || t.owner === player || t.owner === "neutral" || partners.has(t.owner)) continue;
+            if (!t.units.some((x) => x.owner !== player)) continue;
+            (byTarget.get(id) ?? byTarget.set(id, []).get(id)!).push(u);
+          }
+        }
+        for (const [id, us] of byTarget) (offers.get(id) ?? offers.set(id, []).get(id)!).push({ from: src.id, units: us });
       }
       for (const [id, units] of reach) {
         const t = g.territories[id];
@@ -2871,10 +2929,19 @@ async function aiPlayTurn(get: () => Store, _set: unknown): Promise<void> {
         if (aiOdds(all, defenders, t) >= needed * 1.3) break;
       }
       if (used.length < 2) continue;
+      // Planes alone can't lead an attack; make sure some ground troops go in.
+      if (!used.some((o) => o.units.every((u) => isLand(u.type)))) {
+        const ground = byPower.find((o) => !used.includes(o) && o.units.every((u) => isLand(u.type)));
+        if (!ground) continue;
+        used.push(ground);
+        all.push(...ground.units);
+      }
       const odds = aiOdds(all, defenders, t);
       if (odds < needed) continue;
       // Lead from the territory whose whole group can make the trip together.
-      const lead = used.find((o) => legalMoveTargets(g, o.from, o.units).has(id));
+      const lead = used.find(
+        (o) => o.units.every((u) => isLand(u.type)) && legalMoveTargets(g, o.from, o.units).has(id),
+      );
       if (!lead) continue;
       const score = value * Math.min(odds, 3) - defenders.length - 2 * used.length;
       if (!best || score > best.score) {
@@ -2907,6 +2974,9 @@ async function aiPlayTurn(get: () => Store, _set: unknown): Promise<void> {
     await sleep(220);
     await aiFightBattle(get);
   }
+
+  // ---------- Fleet positioning: sail toward enemy coasts ----------
+  await aiSailToCoasts(get, player);
 
   // ---------- Reinforcement: march idle units toward the front ----------
   {
@@ -2956,6 +3026,139 @@ async function aiPlayTurn(get: () => Store, _set: unknown): Promise<void> {
     }
   }
   await sleep(250);
+}
+
+/** Warships a nation can command this turn in a sea zone. */
+function aiWarships(t: Terr, player: Nation): Unit[] {
+  return t.units.filter(
+    (u) => u.owner === player && isNaval(u.type) && !u.movedThisTurn && movesLeft(u) > 0 && UNIT_STATS[u.type].attack > 0,
+  );
+}
+
+function aiPartners(g: GameState, player: Nation): Set<Nation> {
+  return new Set(
+    g.contracts
+      .filter(
+        (c) =>
+          c.status === "active" &&
+          (c.kind === "ceasefire" || c.kind === "alliance") &&
+          (c.from === player || c.to === player),
+      )
+      .map((c) => (c.from === player ? c.to : c.from)),
+  );
+}
+
+async function aiNavalTurn(get: () => Store, player: Nation): Promise<void> {
+  // Naval battles: attack enemy ships we clearly outgun.
+  for (let step = 0; step < 15; step++) {
+    const g = get().game;
+    const partners = aiPartners(g, player);
+    let best: { from: string; to: string; ids: string[]; score: number } | null = null;
+    for (const zone of Object.values(g.territories)) {
+      if (!zone.isSea) continue;
+      const fleet = aiWarships(zone, player);
+      if (!fleet.length) continue;
+      for (const id of legalMoveTargets(g, zone.id, fleet)) {
+        const t = g.territories[id];
+        const enemies = t.units.filter((u) => u.owner !== player && u.owner !== "neutral" && !partners.has(u.owner as Nation));
+        if (!t.isSea || !enemies.length) continue;
+        const odds = aiOdds(fleet, enemies, t);
+        if (odds < 1.5) continue;
+        const score = enemies.reduce((n, u) => n + UNIT_STATS[u.type].cost, 0) * Math.min(odds, 3);
+        if (!best || score > best.score) best = { from: zone.id, to: id, ids: fleet.map((u) => u.id), score };
+      }
+    }
+    if (!best) break;
+    get().selectTerritory(best.from);
+    useGame.setState({ selectedUnitIds: best.ids });
+    get().openMoveDialog(best.to);
+    if (!get().moveDialog) break;
+    get().confirmMove();
+    await sleep(220);
+    await aiFightBattle(get);
+  }
+
+  // Shore bombardment: soften the most crowded enemy coast within range.
+  const g = get().game;
+  const partners = aiPartners(g, player);
+  for (const zone of Object.values(g.territories)) {
+    if (!zone.isSea) continue;
+    const gg = get().game;
+    const guns = gg.territories[zone.id].units.filter((u) => canBombardNow(gg, zone.id, u, player));
+    if (!guns.length) continue;
+    let target: Terr | null = null;
+    for (const id of bombardTargetsFor(gg, zone.id, guns)) {
+      const t = gg.territories[id];
+      if (t.owner === player || t.owner === "neutral" || partners.has(t.owner)) continue;
+      const enemies = t.units.filter((u) => u.owner !== player && isLand(u.type)).length;
+      if (!target || enemies > target.units.length) target = t;
+    }
+    if (!target) continue;
+    get().selectTerritory(zone.id);
+    useGame.setState({ selectedUnitIds: guns.map((u) => u.id) });
+    get().bombardTerritory(target.id);
+    await sleep(200);
+  }
+}
+
+/** Move idle fleets one step closer to enemy-held coastline. */
+async function aiSailToCoasts(get: () => Store, player: Nation): Promise<void> {
+  const g = get().game;
+  const partners = aiPartners(g, player);
+  // Sea zones next to enemy land, or holding enemy ships, are where a fleet is useful.
+  const goal = new Set<string>();
+  for (const t of Object.values(g.territories)) {
+    if (!t.isSea) continue;
+    if (t.units.some((u) => u.owner !== player && u.owner !== "neutral" && !partners.has(u.owner as Nation))) {
+      goal.add(t.id);
+      continue;
+    }
+    if (t.adjacent.some((nid) => {
+      const n = g.territories[nid];
+      return n && !n.isSea && n.owner !== player && n.owner !== "neutral" && !partners.has(n.owner) && n.units.length > 0;
+    })) goal.add(t.id);
+  }
+  if (!goal.size) return;
+  // Distance (in sea moves) from every zone to the nearest such coast.
+  const dist = new Map<string, number>();
+  const queue = [...goal];
+  for (const id of queue) dist.set(id, 0);
+  while (queue.length) {
+    const id = queue.shift()!;
+    for (const nid of g.territories[id].adjacent) {
+      const n = g.territories[nid];
+      if (!n?.isSea || dist.has(nid)) continue;
+      dist.set(nid, dist.get(id)! + 1);
+      queue.push(nid);
+    }
+  }
+  for (const zone of Object.values(g.territories)) {
+    if (!zone.isSea) continue;
+    const gg = get().game;
+    const fleet = aiWarships(gg.territories[zone.id], player);
+    if (!fleet.length || (dist.get(zone.id) ?? 99) === 0) continue;
+    let bestId: string | null = null;
+    let bestD = dist.get(zone.id) ?? 99;
+    for (const id of legalMoveTargets(gg, zone.id, fleet)) {
+      const t = gg.territories[id];
+      // Don't sail into an enemy fleet we can't beat.
+      const enemies = t.units.filter((u) => u.owner !== player && u.owner !== "neutral");
+      if (enemies.length && aiOdds(fleet, enemies, t) < 1.5) continue;
+      const d = dist.get(id) ?? 99;
+      if (d < bestD) {
+        bestD = d;
+        bestId = id;
+      }
+    }
+    if (!bestId) continue;
+    get().selectTerritory(zone.id);
+    useGame.setState({ selectedUnitIds: fleet.map((u) => u.id) });
+    get().openMoveDialog(bestId);
+    if (!get().moveDialog) continue;
+    get().confirmMove();
+    await sleep(150);
+    if (get().pendingBattle) await aiFightBattle(get);
+  }
 }
 
 /** Roll out a battle the AI started, withdrawing if it turns against it. */

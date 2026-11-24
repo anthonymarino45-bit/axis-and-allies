@@ -9,6 +9,7 @@ export function MoveDialog() {
   const confirmMove = useGame((s) => s.confirmMove);
   const cancelMove = useGame((s) => s.cancelMove);
   const setExtraCount = useGame((s) => s.setExtraCount);
+  const selectedId = useGame((s) => s.selectedTerritoryId);
 
   if (!moveDialog) return null;
 
@@ -92,12 +93,15 @@ export function MoveDialog() {
         {extras.length > 0 && (
           <div className="mt-4">
             <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-muted-foreground">
-              Join the attack from neighbouring territories
+              Join the attack from other territories (aircraft within range too)
             </div>
             <div className="mt-2 max-h-56 space-y-2 overflow-y-auto pr-1">
               {extras.map((e) => (
                 <div key={e.fromId} className="rounded border border-border bg-card px-3 py-2">
-                  <div className="text-xs font-semibold">From {game.territories[e.fromId]?.name}</div>
+                  <div className="text-xs font-semibold">
+                    From {game.territories[e.fromId]?.name}
+                    {e.fromId === selectedId ? " (planes based here)" : ""}
+                  </div>
                   {(Object.keys(e.idsByType) as UnitType[]).map((type) => {
                     const s = UNIT_STATS[type];
                     const available = e.idsByType[type].length;
