@@ -30,8 +30,9 @@ npm run build    # type-check and build to dist/
 - `scripts/build-map.ts` — regenerates territory outlines from Natural Earth data
 - `roadmap.md` — which rulebook features are implemented
 
-Music and sound: the game plays its own synthesized march (`src/audio/engine.ts`) and battle
-sound effects. To use a real recording instead, add it as `public/audio/march.mp3`.
+Music and sound: the game plays its own synthesized WW2-era soundtrack — a brass-band march,
+big-band swing and a fife-and-drum march (`src/audio/songs.ts`) — through a 78 rpm record filter
+with crackle (`src/audio/engine.ts`), plus battle sound effects. To use a real recording instead, add it as `public/audio/march.mp3`.
 Each dice roll in a battle involving a human player plays as a cut scene: every unit's die is
 shown as it fires, hits strike the units that really died, and the fallen are marked (toggle
 cut scenes with the 🎬 button).

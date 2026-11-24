@@ -1,10 +1,14 @@
 import { useEffect, useRef, useState } from "react";
-import { Play, Pause, Volume2, VolumeX, Clapperboard } from "lucide-react";
+import { Play, Pause, Volume2, VolumeX, Clapperboard, SkipForward } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
 import { Button } from "@/components/ui/button";
 import { useSettings } from "@/game/settings";
+import { SONGS } from "@/audio/songs";
 import {
+  currentSongName,
   isMarchPlaying,
+  nextSong,
+  setPlaylist,
   onMusicChange,
   setVolume as setEngineVolume,
   startMarch,
@@ -12,7 +16,9 @@ import {
   unlockAudio,
 } from "@/audio/engine";
 
-// The game plays its own synthesized march. To use a real recording instead
+setPlaylist(SONGS);
+
+// The game plays its own synthesized WW2-era soundtrack (src/audio/songs.ts). To use a real recording instead
 // (for example a public-domain U.S. Marine Band "Semper Fidelis"), add it as
 // public/audio/march.mp3 and the player switches to it automatically.
 const TRACK_URL = `${import.meta.env.BASE_URL}audio/march.mp3`;
@@ -22,6 +28,7 @@ export function MusicPlayer() {
   const [recording, setRecording] = useState<boolean | null>(null);
   const [recordingPlaying, setRecordingPlaying] = useState(false);
   const [marchPlaying, setMarchPlaying] = useState(false);
+  const [songName, setSongName] = useState(currentSongName());
   const volume = useSettings((s) => s.volume);
   const setVolume = useSettings((s) => s.setVolume);
   const cutscenes = useSettings((s) => s.cutscenes);
@@ -42,7 +49,14 @@ export function MusicPlayer() {
     };
   }, []);
 
-  useEffect(() => onMusicChange(() => setMarchPlaying(isMarchPlaying())), []);
+  useEffect(
+    () =>
+      onMusicChange(() => {
+        setMarchPlaying(isMarchPlaying());
+        setSongName(currentSongName());
+      }),
+    [],
+  );
   useEffect(() => () => stopMarch(), []);
 
   useEffect(() => {
@@ -97,11 +111,34 @@ export function MusicPlayer() {
         variant="ghost"
         onClick={toggle}
         aria-label={playing ? "Pause music" : "Play music"}
-        title={playing ? "Pause the march" : "Play the march"}
+        title={playing ? "Pause the music" : "Play the music"}
         className="h-8 w-8"
       >
         {playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
       </Button>
+      {!recordingPlaying && (
+        <>
+          <Button
+            size="icon"
+            variant="ghost"
+            onClick={() => {
+              unlockAudio();
+              nextSong();
+            }}
+            aria-label="Next song"
+            title="Next song"
+            className="h-8 w-8"
+          >
+            <SkipForward className="h-4 w-4" />
+          </Button>
+          <span
+            className="hidden w-28 truncate font-serif text-xs italic text-muted-foreground sm:inline"
+            title={songName}
+          >
+            {songName}
+          </span>
+        </>
+      )}
       {volume === 0 ? (
         <VolumeX className="h-4 w-4 text-muted-foreground" />
       ) : (
