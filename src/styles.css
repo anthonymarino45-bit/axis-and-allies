@@ -1,0 +1,190 @@
+@import "tailwindcss" source(none);
+@source "../src";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-allies: var(--allies);
+  --color-allies-foreground: var(--allies-foreground);
+  --color-axis: var(--axis);
+  --color-axis-foreground: var(--axis-foreground);
+  --color-neutral-land: var(--neutral-land);
+  --color-sea: var(--sea);
+  --color-parchment: var(--parchment);
+  --color-parchment-ink: var(--parchment-ink);
+}
+
+:root {
+  --radius: 0.5rem;
+
+  /* Parchment war-room palette */
+  --background: oklch(0.91 0.035 80);
+  --foreground: oklch(0.25 0.04 50);
+
+  --parchment: oklch(0.93 0.04 80);
+  --parchment-ink: oklch(0.28 0.05 50);
+
+  --card: oklch(0.96 0.025 80);
+  --card-foreground: oklch(0.25 0.04 50);
+  --popover: oklch(0.96 0.025 80);
+  --popover-foreground: oklch(0.25 0.04 50);
+
+  --primary: oklch(0.35 0.06 50);
+  --primary-foreground: oklch(0.96 0.025 80);
+  --secondary: oklch(0.85 0.03 80);
+  --secondary-foreground: oklch(0.25 0.04 50);
+  --muted: oklch(0.86 0.025 80);
+  --muted-foreground: oklch(0.45 0.04 60);
+  --accent: oklch(0.78 0.08 60);
+  --accent-foreground: oklch(0.22 0.04 50);
+  --destructive: oklch(0.5 0.22 27);
+  --destructive-foreground: oklch(0.98 0.01 80);
+  --border: oklch(0.7 0.04 60);
+  --input: oklch(0.75 0.03 70);
+  --ring: oklch(0.45 0.1 50);
+
+  /* Factions */
+  --allies: oklch(0.45 0.14 250);            /* deep navy blue */
+  --allies-foreground: oklch(0.97 0.02 250);
+  --axis: oklch(0.45 0.18 25);               /* military red */
+  --axis-foreground: oklch(0.97 0.02 25);
+
+  --neutral-land: oklch(0.82 0.05 90);
+  --sea: oklch(0.78 0.06 230);
+}
+
+.dark {
+  --background: oklch(0.18 0.02 60);
+  --foreground: oklch(0.92 0.03 80);
+  --parchment: oklch(0.22 0.025 60);
+  --parchment-ink: oklch(0.92 0.03 80);
+  --card: oklch(0.22 0.025 60);
+  --card-foreground: oklch(0.92 0.03 80);
+  --popover: oklch(0.22 0.025 60);
+  --popover-foreground: oklch(0.92 0.03 80);
+  --primary: oklch(0.85 0.05 80);
+  --primary-foreground: oklch(0.2 0.03 60);
+  --secondary: oklch(0.28 0.03 60);
+  --secondary-foreground: oklch(0.92 0.03 80);
+  --muted: oklch(0.28 0.03 60);
+  --muted-foreground: oklch(0.7 0.03 70);
+  --accent: oklch(0.4 0.08 60);
+  --accent-foreground: oklch(0.95 0.02 80);
+  --destructive: oklch(0.55 0.2 27);
+  --destructive-foreground: oklch(0.98 0.01 80);
+  --border: oklch(0.35 0.03 60);
+  --input: oklch(0.32 0.03 60);
+  --ring: oklch(0.7 0.05 70);
+
+  --allies: oklch(0.6 0.16 250);
+  --allies-foreground: oklch(0.12 0.04 250);
+  --axis: oklch(0.6 0.2 25);
+  --axis-foreground: oklch(0.12 0.04 25);
+  --neutral-land: oklch(0.45 0.04 90);
+  --sea: oklch(0.35 0.06 230);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    background-image:
+      radial-gradient(circle at 20% 10%, color-mix(in oklab, var(--accent) 15%, transparent), transparent 50%),
+      radial-gradient(circle at 80% 90%, color-mix(in oklab, var(--primary) 12%, transparent), transparent 55%);
+    font-family: ui-serif, Georgia, "Iowan Old Style", "Times New Roman", serif;
+  }
+}
+
+@keyframes unit-action-bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-5px); }
+}
+
+@keyframes unit-action-attack {
+  0%, 100% { filter: drop-shadow(0 1px 1px color-mix(in oklab, var(--parchment-ink) 30%, transparent)); }
+  50% { filter: drop-shadow(0 0 7px color-mix(in oklab, var(--destructive) 75%, transparent)); }
+}
+
+@keyframes unit-action-target {
+  0% { opacity: 0; transform: scale(0.45); transform-origin: center; }
+  35% { opacity: 0.95; }
+  100% { opacity: 0; transform: scale(1.8); transform-origin: center; }
+}
+
+.unit-action-unit {
+  animation: unit-action-bob 220ms ease-in-out infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.unit-action-attack {
+  animation: unit-action-bob 160ms ease-in-out infinite, unit-action-attack 360ms ease-in-out 2;
+}
+
+.unit-action-retreat {
+  opacity: 0.88;
+}
+
+.unit-action-target {
+  animation: unit-action-target 820ms ease-out both;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.unit-action-label {
+  paint-order: stroke;
+  stroke: var(--parchment);
+  stroke-width: 5px;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .unit-action-unit,
+  .unit-action-attack,
+  .unit-action-target {
+    animation-duration: 1ms;
+    animation-iteration-count: 1;
+  }
+}
+
+/* Condensed unit icon clusters on the map: collapsed stack fans out on hover */
+.unit-cluster .cluster-expanded {
+  display: none;
+}
+.unit-cluster:hover .cluster-expanded {
+  display: inline;
+}
+.unit-cluster:hover .cluster-collapsed {
+  display: none;
+}
