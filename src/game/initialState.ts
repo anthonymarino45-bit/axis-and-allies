@@ -1713,20 +1713,44 @@ function parsePoints(s: string): Array<[number, number]> {
   });
 }
 
-function pointInPolygon(x: number, y: number, poly: Array<[number, number]>): boolean {
+
+interface LandPoly {
+  id: string;
+  poly: Array<[number, number]>;
+  bbox: [number, number, number, number];
+  /** Edge indices grouped by horizontal band, for fast point-in-polygon tests. */
+  bands?: Map<number, number[]>;
+}
+
+const BAND = 8;
+/** Same result as pointInPolygon, but only visits edges that cross the point's row. */
+function insideLand(x: number, y: number, L: LandPoly): boolean {
+  if (!L.bands) {
+    L.bands = new Map();
+    const n = L.poly.length;
+    for (let i = 0, j = n - 1; i < n; j = i++) {
+      const y0 = Math.min(L.poly[i][1], L.poly[j][1]);
+      const y1 = Math.max(L.poly[i][1], L.poly[j][1]);
+      for (let b = Math.floor(y0 / BAND); b <= Math.floor(y1 / BAND); b++) {
+        const list = L.bands.get(b);
+        if (list) list.push(i);
+        else L.bands.set(b, [i]);
+      }
+    }
+  }
+  const edges = L.bands.get(Math.floor(y / BAND));
+  if (!edges) return false;
+  const poly = L.poly;
+  const n = poly.length;
   let inside = false;
-  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+  for (const i of edges) {
+    const j = (i + n - 1) % n;
     const [xi, yi] = poly[i];
     const [xj, yj] = poly[j];
-    const intersect =
-      yi > y !== yj > y &&
-      x < ((xj - xi) * (y - yi)) / (yj - yi || 1e-9) + xi;
-    if (intersect) inside = !inside;
+    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi || 1e-9) + xi) inside = !inside;
   }
   return inside;
 }
-
-interface LandPoly { id: string; poly: Array<[number, number]>; bbox: [number, number, number, number]; }
 
 function buildLandPolys(): LandPoly[] {
   const out: LandPoly[] = [];
@@ -1743,11 +1767,37 @@ function buildLandPolys(): LandPoly[] {
   return out;
 }
 
-function findContainingLand(x: number, y: number, lands: LandPoly[]): string | null {
+// Spatial index: each grid cell lists the land shapes whose bounding box
+// touches it, so a point is only tested against the few shapes nearby.
+const LAND_CELL = 80;
+const landIndex = new WeakMap<LandPoly[], Map<number, LandPoly[]>>();
+const cellKey = (cx: number, cy: number) => cx * 100003 + cy;
+function indexFor(lands: LandPoly[]): Map<number, LandPoly[]> {
+  let index = landIndex.get(lands);
+  if (index) return index;
+  index = new Map();
   for (const L of lands) {
     const [a, b, c, d] = L.bbox;
+    for (let cx = Math.floor(a / LAND_CELL); cx <= Math.floor(c / LAND_CELL); cx++) {
+      for (let cy = Math.floor(b / LAND_CELL); cy <= Math.floor(d / LAND_CELL); cy++) {
+        const k = cellKey(cx, cy);
+        const list = index.get(k);
+        if (list) list.push(L);
+        else index.set(k, [L]);
+      }
+    }
+  }
+  landIndex.set(lands, index);
+  return index;
+}
+
+function findContainingLand(x: number, y: number, lands: LandPoly[]): string | null {
+  const nearby = indexFor(lands).get(cellKey(Math.floor(x / LAND_CELL), Math.floor(y / LAND_CELL)));
+  if (!nearby) return null;
+  for (const L of nearby) {
+    const [a, b, c, d] = L.bbox;
     if (x < a || x > c || y < b || y > d) continue;
-    if (pointInPolygon(x, y, L.poly)) return L.id;
+    if (insideLand(x, y, L)) return L.id;
   }
   return null;
 }
@@ -1768,6 +1818,47 @@ const HEX_SAMPLES: Array<[number, number]> = (() => {
 })();
 /** A hex is ocean if at least this share of it is water. */
 const MIN_WATER = 0.06;
+
+/**
+ * Where a sea hex shows its units. Unit counters are drawn in a row just
+ * below this point, so pick the water spot with the most open sea around
+ * that row; keep the hex centre whenever it already has plenty of room.
+ */
+const STACK_DROP = 14; // unit counters sit this far below the spot
+const CLEARANCE = [56, 42, 30, 20, 12];
+function clearanceAt(x: number, y: number, lands: LandPoly[]): number {
+  const cy = y + STACK_DROP;
+  for (const r of CLEARANCE) {
+    let open = true;
+    for (let k = 0; k < 8 && open; k++) {
+      const a = (Math.PI / 4) * k;
+      // Counters spread sideways more than up and down.
+      if (findContainingLand(x + r * 1.3 * Math.cos(a), cy + r * 0.7 * Math.sin(a), lands)) open = false;
+    }
+    if (open) return r;
+  }
+  return 0;
+}
+function unitSpot(
+  c: { x: number; y: number },
+  centreWet: boolean,
+  points: Array<[number, number]>,
+  mx: number,
+  my: number,
+  lands: LandPoly[],
+): { x: number; y: number } {
+  if (centreWet && clearanceAt(c.x, c.y, lands) >= CLEARANCE[0]) return c;
+  let best = centreWet ? { x: c.x, y: c.y } : nearestWet(points, mx, my);
+  let bestScore = clearanceAt(best.x, best.y, lands) * 1000 - Math.hypot(best.x - mx, best.y - my);
+  for (const [px, py] of points) {
+    const score = clearanceAt(px, py, lands) * 1000 - Math.hypot(px - mx, py - my);
+    if (score > bestScore) {
+      bestScore = score;
+      best = { x: px, y: py };
+    }
+  }
+  return best;
+}
 
 /** The water sample closest to (x, y) — the average of split water can land on land. */
 function nearestWet(points: Array<[number, number]>, x: number, y: number): { x: number; y: number } {
@@ -1843,7 +1934,7 @@ function generateSeaHexes(): {
         id,
         q, r,
         centre: c,
-        waterCentre: centreWet ? c : nearestWet(wetPoints.length ? wetPoints : shallow, sx / wet, sy / wet),
+        waterCentre: unitSpot(c, centreWet, wetPoints.length ? wetPoints : shallow, sx / wet, sy / wet, lands),
         points: hexPoints(c.x, c.y),
         seaNeighbours: [],
         landNeighbours: new Set(),

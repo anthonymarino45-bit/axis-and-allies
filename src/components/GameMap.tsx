@@ -160,6 +160,18 @@ export function GameMap() {
     return lines;
   }, [territories]);
 
+  const onTerritoryClick = (id: string) => {
+    if (didDragRef.current) return;
+    if (aiTurnInProgress) return;
+    if (bombardTargeting) {
+      if (bombardTargets.has(id)) bombardTerritory(id);
+      else setBombardTargeting(false);
+      return;
+    }
+    if (reachable.has(id)) openMoveDialog(id);
+    else selectTerritory(id);
+  };
+
   return (
     <div ref={wrapRef} className="relative h-full w-full">
     <svg
@@ -336,17 +348,7 @@ export function GameMap() {
         return (
           <g
             key={t.id}
-            onClick={() => {
-              if (didDragRef.current) return;
-              if (aiTurnInProgress) return;
-              if (bombardTargeting) {
-                if (isBombardTarget) bombardTerritory(t.id);
-                else setBombardTargeting(false);
-                return;
-              }
-              if (isReach) openMoveDialog(t.id);
-              else selectTerritory(t.id);
-            }}
+            onClick={() => onTerritoryClick(t.id)}
             className="cursor-pointer"
           >
             <polygon
@@ -467,10 +469,21 @@ export function GameMap() {
                 })}
               </g>
             )}
-            <UnitStack territory={t} />
           </g>
         );
       })}
+
+      {/* Units sit in their own layer above every territory, so a coastline
+          drawn later can never hide a fleet. Clicks act on their territory. */}
+      <g>
+        {Object.values(territories)
+          .filter((t) => t.units.length > 0)
+          .map((t) => (
+            <g key={`units:${t.id}`} onClick={() => onTerritoryClick(t.id)} className="cursor-pointer">
+              <UnitStack territory={t} />
+            </g>
+          ))}
+      </g>
       {visibleAnimation && (
         <MapUnitAnimation event={visibleAnimation} territories={territories} reduceMotion={reduceMotion} />
       )}
