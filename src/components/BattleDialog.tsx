@@ -26,9 +26,14 @@ function DieView({ roll }: { roll: DieRoll }) {
         <span className="ml-1 font-normal opacity-70">≤{roll.target}</span>
       </div>
       <div className="text-[9px] font-semibold">
-        {roll.casualty ? "KIA" : roll.hit ? (roll.bomberKills ? `HIT ×${roll.bomberKills}` : "HIT") : "miss"}
+        {roll.casualty
+          ? "KIA"
+          : roll.hit
+            ? roll.bomberKills
+              ? `HIT ×${roll.bomberKills}`
+              : "HIT"
+            : "miss"}
       </div>
-
     </div>
   );
 }
@@ -90,6 +95,7 @@ export function BattleDialog() {
   );
 
   const ongoing = pendingBattle.status === "ongoing";
+  const retreatTried = pendingBattle.retreatTriedAfterRound === pendingBattle.rounds.length;
   const statusLabel =
     pendingBattle.status === "attacker-won"
       ? `Victory — ${to.name} captured`
@@ -109,9 +115,7 @@ export function BattleDialog() {
             <div className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
               Combat Phase
             </div>
-            <h2 className="font-serif text-2xl font-bold">
-              Battle of {to.name}
-            </h2>
+            <h2 className="font-serif text-2xl font-bold">Battle of {to.name}</h2>
           </div>
           <div className="text-right text-xs">
             <div className="text-muted-foreground">Round</div>
@@ -135,10 +139,7 @@ export function BattleDialog() {
             <div
               className="text-[10px] font-bold uppercase tracking-widest"
               style={{
-                color:
-                  to.owner === "neutral"
-                    ? "var(--muted-foreground)"
-                    : NATIONS[to.owner].color,
+                color: to.owner === "neutral" ? "var(--muted-foreground)" : NATIONS[to.owner].color,
               }}
             >
               Defenders · {factionName(to.owner)} · {to.name}
@@ -149,44 +150,48 @@ export function BattleDialog() {
           </div>
         </div>
 
-        {pendingBattle.opening && (
+        {pendingBattle.opening &&
           pendingBattle.opening.bombardRolls.length +
-          pendingBattle.opening.coastalRolls.length +
-          pendingBattle.opening.aaRolls.length +
-          pendingBattle.opening.mineRolls.length > 0
-        ) && (
-          <div className="mt-4 rounded border border-border bg-card p-3">
-            <div className="mb-2 flex items-center justify-between text-[10px] uppercase tracking-widest text-muted-foreground">
-              <span>Opening Fire</span>
-              <span>
-                Defenders lost {pendingBattle.opening.defenderLosses} · Attackers lost{" "}
-                {pendingBattle.opening.attackerLosses}
-              </span>
+            pendingBattle.opening.coastalRolls.length +
+            pendingBattle.opening.aaRolls.length +
+            pendingBattle.opening.mineRolls.length >
+            0 && (
+            <div className="mt-4 rounded border border-border bg-card p-3">
+              <div className="mb-2 flex items-center justify-between text-[10px] uppercase tracking-widest text-muted-foreground">
+                <span>Opening Fire</span>
+                <span>
+                  Defenders lost {pendingBattle.opening.defenderLosses} · Attackers lost{" "}
+                  {pendingBattle.opening.attackerLosses}
+                </span>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {[
+                  ...pendingBattle.opening.bombardRolls,
+                  ...pendingBattle.opening.coastalRolls,
+                  ...pendingBattle.opening.aaRolls,
+                  ...pendingBattle.opening.mineRolls,
+                ].map((r, i) => (
+                  <DieView key={i} roll={r} />
+                ))}
+              </div>
             </div>
-            <div className="flex flex-wrap gap-1.5">
-              {[
-                ...pendingBattle.opening.bombardRolls,
-                ...pendingBattle.opening.coastalRolls,
-                ...pendingBattle.opening.aaRolls,
-                ...pendingBattle.opening.mineRolls,
-              ].map((r, i) => (
-                <DieView key={i} roll={r} />
-              ))}
-            </div>
-          </div>
-        )}
+          )}
 
-        {pendingBattle.retreatRoll && !pendingBattle.retreatRoll.success && (
-          <div className="mt-3 rounded border border-destructive/50 bg-destructive/15 p-2 text-center text-xs font-semibold uppercase tracking-widest">
-            Retreat roll {pendingBattle.retreatRoll.roll} — withdrawal failed (needs 1-3)
-          </div>
-        )}
+        {pendingBattle.retreatRoll &&
+          !pendingBattle.retreatRoll.success &&
+          pendingBattle.retreatTriedAfterRound === pendingBattle.rounds.length && (
+            <div className="mt-3 rounded border border-destructive/50 bg-destructive/15 p-2 text-center text-xs font-semibold uppercase tracking-widest">
+              Withdrawal roll {pendingBattle.retreatRoll.roll} — failed (needs 1-3). Your troops
+              must fight the next round.
+            </div>
+          )}
 
         {lastRound && (
           <div className="mt-4 rounded border border-border bg-card p-3">
             <div className="mb-2 flex items-center justify-between text-[10px] uppercase tracking-widest text-muted-foreground">
               <span>
-                {lastRound.dogfight ? "Dogfight" : "Latest Volley"} — Round {pendingBattle.rounds.length}
+                {lastRound.dogfight ? "Dogfight" : "Latest Volley"} — Round{" "}
+                {pendingBattle.rounds.length}
               </span>
               <span>
                 Attackers {lastRound.attackHits} hit · Defenders {lastRound.defenseHits} hit
@@ -221,6 +226,20 @@ export function BattleDialog() {
           </div>
         )}
 
+        {ongoing && !watching && pendingBattle.rounds.length > 0 && (
+          <div className="mt-4 rounded border border-primary/50 bg-primary/10 p-3 text-center">
+            <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-muted-foreground">
+              Round {pendingBattle.rounds.length} complete
+            </div>
+            <div className="mt-1 text-sm">
+              <b>{pendingBattle.attackerUnitIds.length}</b> attacking unit
+              {pendingBattle.attackerUnitIds.length === 1 ? "" : "s"} vs <b>{to.units.length}</b>{" "}
+              defending unit{to.units.length === 1 ? "" : "s"} remain. Press the attack, or try to
+              withdraw (needs 1-3 on a die).
+            </div>
+          </div>
+        )}
+
         {!ongoing && (
           <div className="mt-4 rounded border border-accent bg-accent/20 p-3 text-center text-sm font-bold uppercase tracking-widest">
             {statusLabel}
@@ -229,7 +248,9 @@ export function BattleDialog() {
 
         <div className="mt-5 flex items-center justify-between gap-2">
           <div className="text-[10px] uppercase tracking-widest text-muted-foreground">
-            Casualties taken cheapest-first
+            {ongoing && pendingBattle.rounds.length === 0
+              ? "You can try to withdraw after the first roll"
+              : "Casualties taken cheapest-first"}
           </div>
           <div className="flex gap-2">
             {watching ? (
@@ -238,17 +259,28 @@ export function BattleDialog() {
               </span>
             ) : ongoing ? (
               <>
-                <button
-                  onClick={retreatBattle}
-                  className="rounded border border-border bg-secondary px-3 py-2 text-xs font-semibold uppercase tracking-wider hover:bg-accent"
-                >
-                  Retreat
-                </button>
+                {pendingBattle.rounds.length > 0 && (
+                  <button
+                    onClick={retreatBattle}
+                    disabled={retreatTried}
+                    title={
+                      retreatTried
+                        ? "You already tried to withdraw this round — fight the next round first"
+                        : "Roll a die: 1-3 and your attackers pull back"
+                    }
+                    className="rounded border border-border bg-secondary px-3 py-2 text-xs font-semibold uppercase tracking-wider hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {retreatTried ? "Withdrawal failed" : "Withdraw"}
+                  </button>
+                )}
                 <button
                   onClick={rollBattleRound}
                   className="rounded border border-border bg-primary px-4 py-2 text-sm font-bold uppercase tracking-widest text-primary-foreground hover:opacity-90"
                 >
-                  🎲 Roll Dice
+                  🎲{" "}
+                  {pendingBattle.rounds.length === 0
+                    ? "Roll Dice"
+                    : `Roll Round ${pendingBattle.rounds.length + 1}`}
                 </button>
               </>
             ) : (

@@ -82,6 +82,8 @@ export interface PendingBattle {
   opening?: OpeningFire;
   /** Last retreat attempt (D6, 1-3 succeeds). */
   retreatRoll?: { roll: number; success: boolean };
+  /** The round after which a withdrawal was last attempted (one try per round). */
+  retreatTriedAfterRound?: number;
 }
 
 export type MapAnimationKind = "march" | "attack" | "retreat" | "capture";
@@ -1264,6 +1266,10 @@ export const useGame = create<Store>((set, get) => ({
   retreatBattle: () => {
     const { game, pendingBattle } = get();
     if (!pendingBattle || pendingBattle.status !== "ongoing") return;
+    // A withdrawal is only possible between rounds: after the first roll, and
+    // once per round — a failed attempt means fighting the next round first.
+    const round = pendingBattle.rounds.length;
+    if (round === 0 || pendingBattle.retreatTriedAfterRound === round) return;
     // Rulebook: a withdrawal needs a D6 of 1-3; otherwise the fight goes on.
     const r = d6();
     const success = r <= 3;
@@ -1279,6 +1285,7 @@ export const useGame = create<Store>((set, get) => ({
       pendingBattle: {
         ...pendingBattle,
         retreatRoll: { roll: r, success },
+        retreatTriedAfterRound: round,
         status: success ? "retreated" : "ongoing",
       },
     });

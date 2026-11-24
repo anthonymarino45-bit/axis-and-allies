@@ -258,7 +258,11 @@ function RulesBody({ tab }: { tab: Tab }) {
           <li>Dogfights — air units battle each other first.</li>
           <li>Anti-air fire from defenders.</li>
           <li>Ground / naval assault: attack and defense rolls, order-of-loss casualties; bombers and howitzers roll a D4 after a hit to kill 1–4 units (D6 only against mountains and jungle).</li>
-          <li>Attackers may retreat on a roll of 1–3; islands hold at most 15 units.</li>
+          <li>
+            Battles are fought one roll at a time. After each round the attacker may try to withdraw
+            (needs 1–3 on a die) — one attempt per round; a failed attempt means fighting the next round.
+          </li>
+          <li>Islands hold at most 15 units.</li>
         </ul>
       </Section>
       <Section title="Kamikaze">
