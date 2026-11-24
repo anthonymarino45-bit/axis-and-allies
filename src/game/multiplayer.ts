@@ -69,6 +69,7 @@ type Msg =
   | { t: "claim"; nation: Nation }
   | { t: "release"; nation: Nation }
   | { t: "pause" }
+  | { t: "respond"; id: string; accept: boolean }
   | { t: "bye"; reason: string };
 
 const PEER_PREFIX = "aa25-campaign-";
@@ -473,6 +474,7 @@ function wireHostPeer(p: Peer) {
       if (msg.t === "release" && PLAYER_ORDER.includes(msg.nation))
         return hostRelease(guestId, msg.nation, false);
       if (msg.t === "pause") return useGame.getState().togglePause();
+      if (msg.t === "respond") return hostRespond(guestId, String(msg.id), !!msg.accept);
     });
     conn.on("close", () => {
       if (!guestId || guests.get(guestId) !== conn) return;
@@ -489,6 +491,14 @@ function wireHostPeer(p: Peer) {
     // new players can still find the room.
     if (useNet.getState().mode === "host" && !p.destroyed) p.reconnect();
   });
+}
+
+let respondOriginal: ((id: string, accept: boolean) => void) | null = null;
+
+function hostRespond(guestId: string, id: string, accept: boolean) {
+  const c = useGame.getState().game.contracts.find((x) => x.id === id);
+  if (!c || useNet.getState().seats[c.to] !== guestId) return;
+  respondOriginal?.(id, accept); // the host's own change is broadcast as usual
 }
 
 function hostReceiveState(guestId: string, conn: DataConnection, snap: Snapshot) {
@@ -578,7 +588,6 @@ if (typeof window !== "undefined") {
 const TURN_ACTIONS = [
   "setGameDay",
   "proposeContract",
-  "respondContract",
   "cancelContract",
   "openMoveDialog",
   "confirmMove",
@@ -642,6 +651,18 @@ function installGuards() {
       if (!(net.mode === "host" && net.started && !net.seats[current])) return Promise.resolve();
     }
     return runAI();
+  };
+  // Answering a diplomatic offer is up to the player whose nation received
+  // it, whenever it arrives — not only on that nation's turn.
+  respondOriginal = state.respondContract as (id: string, accept: boolean) => void;
+  patch.respondContract = (...args) => {
+    const [id, accept] = args as [string, boolean];
+    const net = useNet.getState();
+    if (net.mode === "local") return respondOriginal!(id, accept);
+    const c = useGame.getState().game.contracts.find((x) => x.id === id);
+    if (!c || net.seats[c.to] !== net.myId) return undefined;
+    if (net.mode === "guest") return send(hostConn, { t: "respond", id, accept });
+    return respondOriginal!(id, accept);
   };
   const pause = state.togglePause;
   patch.togglePause = () => {

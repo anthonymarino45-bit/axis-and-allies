@@ -8,6 +8,7 @@ import { VictoryScreen } from "@/components/VictoryScreen";
 import { RulesReference } from "@/components/RulesReference";
 import { MultiplayerPanel } from "@/components/MultiplayerPanel";
 import { BattleCutscene } from "@/components/BattleCutscene";
+import { DiplomacyNotices } from "@/components/DiplomacyNotices";
 import { useGame } from "@/game/store";
 import { useNet } from "@/game/multiplayer";
 import { canRunAI, isAINation } from "@/game/control";
@@ -35,6 +36,7 @@ export function GameScreen() {
       <CommandPanel />
       <BattleDialog />
       <BattleCutscene />
+      <DiplomacyNotices />
       <MoveDialog />
       <MusicPlayer />
       <RulesReference />

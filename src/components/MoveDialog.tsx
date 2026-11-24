@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { useGame } from "@/game/store";
 import { UNIT_STATS, type UnitType } from "@/game/types";
 
@@ -51,9 +52,13 @@ export function MoveDialog() {
                   >
                     −
                   </button>
-                  <span className="w-8 text-center text-sm font-bold">
-                    {chosen}
-                  </span>
+                  <CountInput
+                    id={`move-count-${type}`}
+                    label={`Number of ${s.label} to send`}
+                    value={chosen}
+                    max={available}
+                    onChange={(n) => setMoveCount(type, n)}
+                  />
                   <button
                     type="button"
                     onClick={() =>
@@ -63,6 +68,14 @@ export function MoveDialog() {
                     className="h-7 w-7 rounded border border-border bg-secondary text-sm font-bold hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     +
+                  </button>
+                  <span className="w-10 text-[10px] text-muted-foreground">of {available}</span>
+                  <button
+                    type="button"
+                    onClick={() => setMoveCount(type, chosen === available ? 0 : available)}
+                    className="rounded border border-border px-1.5 py-1 text-[10px] font-semibold uppercase hover:bg-accent"
+                  >
+                    {chosen === available ? "None" : "All"}
                   </button>
                 </div>
               </div>
@@ -93,5 +106,49 @@ export function MoveDialog() {
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * A typeable unit count. Keeps the text while the player types (so the box
+ * can be briefly empty) and clamps to 0…max.
+ */
+function CountInput({
+  id,
+  label,
+  value,
+  max,
+  onChange,
+}: {
+  id: string;
+  label: string;
+  value: number;
+  max: number;
+  onChange: (n: number) => void;
+}) {
+  const [draft, setDraft] = useState(String(value));
+  useEffect(() => setDraft(String(value)), [value]);
+  const commit = (text: string) => {
+    const n = Math.floor(Number(text));
+    if (text.trim() === "" || !Number.isFinite(n)) return;
+    onChange(Math.max(0, Math.min(max, n)));
+  };
+  return (
+    <input
+      id={id}
+      aria-label={label}
+      type="number"
+      inputMode="numeric"
+      min={0}
+      max={max}
+      value={draft}
+      onChange={(e) => {
+        setDraft(e.target.value);
+        commit(e.target.value);
+      }}
+      onBlur={() => setDraft(String(value))}
+      onFocus={(e) => e.currentTarget.select()}
+      className="h-7 w-12 rounded border border-border bg-background text-center text-sm font-bold [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+    />
   );
 }

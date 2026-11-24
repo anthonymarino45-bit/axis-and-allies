@@ -819,6 +819,80 @@ function legalMoveTargets(g: GameState, fromId: string, units: Unit[]): Set<stri
   return result;
 }
 
+// ---------------------------------------------------------------------------
+// AI helpers — strength estimates used to decide where to fight and defend.
+// Each hit kills one unit, so a force's strength is its expected hits per
+// round times the hits it can absorb (Lanchester's square law).
+// ---------------------------------------------------------------------------
+
+type Terr = GameState["territories"][string];
+
+function aiAttackPower(units: Unit[]): number {
+  return units.reduce((s, u) => s + UNIT_STATS[u.type].attack / 6, 0);
+}
+
+function aiDefensePower(units: Unit[], t: Terr): number {
+  const fort = t.isSea ? 0 : structureDefenseBonus(t);
+  return units.reduce((s, u) => {
+    const d = UNIT_STATS[u.type].defense;
+    return s + (d > 0 ? Math.min(6, d + fort) : 0) / 6;
+  }, 0);
+}
+
+/** Attacker's strength relative to the defenders (above 1 favours the attacker). */
+function aiOdds(attackers: Unit[], defenders: Unit[], t: Terr): number {
+  const fighting = defenders.filter((u) => !isNaval(u.type) || t.isSea);
+  if (fighting.length === 0) return Infinity;
+  const a = aiAttackPower(attackers) * attackers.length;
+  const d = Math.max(0.05, aiDefensePower(fighting, t)) * fighting.length;
+  return a / d;
+}
+
+/** Strongest attack any enemy could launch on `t` next turn from a neighbour. */
+function aiThreat(g: GameState, t: Terr, player: Nation): number {
+  let worst = 0;
+  for (const nid of t.adjacent) {
+    const n = g.territories[nid];
+    if (!n || n.isSea) continue;
+    const enemies = n.units.filter((u) => u.owner !== player && u.owner !== "neutral" && isLand(u.type));
+    if (enemies.length === 0) continue;
+    worst = Math.max(worst, aiAttackPower(enemies) * enemies.length);
+  }
+  return worst;
+}
+
+/** How much a territory is worth taking. */
+function aiValue(t: Terr, player: Nation): number {
+  let v = 2 + (t.ipc ?? 0) * 3;
+  if (t.hasFactory) v += 10;
+  if (hasStructure(t, "capital")) v += 20;
+  if ((t.structures ?? []).length) v += 2 * (t.structures ?? []).length;
+  if (t.owner !== "neutral" && t.owner !== player) v += 3; // weakening a rival
+  return v;
+}
+
+/**
+ * Units that must stay put so `t` can hold against the threat next door:
+ * the best defenders first, enough to match the threat (more for a factory).
+ */
+function aiGarrison(g: GameState, t: Terr, player: Nation, movable: Unit[]): Set<string> {
+  const threat = aiThreat(g, t, player);
+  const keep = new Set<string>();
+  const fixed = t.units.filter((u) => u.owner === player && !movable.includes(u));
+  const margin = t.hasFactory ? 1.25 : 0.9;
+  const strength = (us: Unit[]) => aiDefensePower(us, t) * us.length;
+  // Factories always keep a token guard against a surprise attack.
+  const minGuard = t.hasFactory ? 1 : 0;
+  const pool = [...movable].sort((a, b) => UNIT_STATS[b.type].defense - UNIT_STATS[a.type].defense);
+  const kept: Unit[] = [...fixed];
+  for (const u of pool) {
+    if (kept.length >= minGuard && strength(kept) >= threat * margin) break;
+    kept.push(u);
+    keep.add(u.id);
+  }
+  return keep;
+}
+
 const savedCampaign = loadSavedCampaign();
 
 export const useGame = create<Store>((set, get) => ({
@@ -2461,189 +2535,24 @@ export const useGame = create<Store>((set, get) => ({
 
   runAITurn: async () => {
     set({ aiTurnInProgress: true });
-    await sleep(400);
-
-    const {
-      selectTerritory, selectAllUnitsHere, openMoveDialog, confirmMove,
-      rollBattleRound, closeBattle, buyUnit, endTurn,
-    } = get();
-
-    // Build phase — infantry only.
-    const buildState = get().game;
-    const player = buildState.currentPlayer as Nation;
-    const ownedTerritories = Object.values(buildState.territories).filter(
-      (t) => t.owner === player && !t.isSea,
-    );
-    // Prioritize building in factory territories that are threatened.
-    ownedTerritories.sort((a, b) => {
-      const score = (t: typeof a) => {
-        if (!t.hasFactory) return 0;
-        const threatened = t.adjacent.some((id) => {
-          const n = buildState.territories[id];
-          return n && !n.isSea && n.owner !== player && n.owner !== "neutral" && n.units.length > 0;
-        });
-        return threatened ? 2 : 1;
-      };
-      return score(b) - score(a);
-    });
-    // Construction phase — fortify and develop the homeland when flush.
-    {
-      const { buildStructure } = get();
-      const priority: StructureType[] = [
-        "bunker", "harbor", "airfield", "oil_platform", "warehouse", "scrap_yard",
-      ];
-      for (const t of ownedTerritories) {
-        const g = get().game;
-        const tt = g.territories[t.id];
-        if (!tt || tt.owner !== player || !tt.hasFactory) continue;
-        if (g.treasury[player] < 45) break;
-        const pick = priority.find(
-          (s) =>
-            !hasStructure(tt, s) &&
-            g.treasury[player] >= STRUCTURE_STATS[s].cost + 20 &&
-            (!STRUCTURE_STATS[s].coastal ||
-              tt.adjacent.some((nid) => g.territories[nid]?.isSea)),
-        );
-        if (!pick) continue;
-        selectTerritory(t.id);
-        await sleep(50);
-        buildStructure(pick);
-      }
-    }
-
-    for (const t of ownedTerritories) {
-      const g = get().game;
-      const tt = g.territories[t.id];
-      if (tt.owner !== player) continue;
-      const cost = UNIT_STATS.infantry.cost;
-      if (g.treasury[player] < cost) break;
-      if (!tt.hasFactory && tt.builtInfantryThisTurn) continue;
-      selectTerritory(t.id);
-      await sleep(50);
-      buyUnit("infantry");
-    }
-
-    await sleep(300);
-
-    // Reinforcement phase — move spare land units from safe territories into
-    // adjacent friendly factory territories that are threatened by enemies.
-    {
-      const g0 = get().game;
-      for (const t of Object.values(g0.territories)) {
-        if (t.owner !== player || t.isSea || t.hasFactory) continue;
-        const g = get().game;
-        const tt = g.territories[t.id];
-        const movable = tt.units.filter(
-          (u) => u.owner === player && !u.movedThisTurn && movesLeft(u) > 0 && isLand(u.type),
-
-        );
-        if (movable.length === 0) continue;
-
-        // Is this territory itself threatened? If so, keep units to defend.
-        const selfThreatened = tt.adjacent.some((id) => {
-          const n = g.territories[id];
-          return n && !n.isSea && n.owner !== player && n.owner !== "neutral" && n.units.length > 0;
-        });
-        if (selfThreatened) continue;
-
-        // Find an adjacent friendly factory territory that is threatened.
-        const reinforceTarget = tt.adjacent
-          .map((id) => g.territories[id])
-          .find((n) => {
-            if (!n || n.isSea || n.owner !== player || !n.hasFactory) return false;
-            return n.adjacent.some((aid) => {
-              const e = g.territories[aid];
-              return e && !e.isSea && e.owner !== player && e.owner !== "neutral";
-            });
-          });
-        if (!reinforceTarget) continue;
-
-        selectTerritory(t.id);
-        useGame.setState({ selectedUnitIds: movable.map((u) => u.id) });
-        openMoveDialog(reinforceTarget.id);
-        if (!get().moveDialog) continue;
-        confirmMove();
-        await sleep(200);
-      }
-    }
-
-    // Move / attack phase — land units only (skips sea zones).
-    let madeMove = true;
-    let iterations = 0;
-    while (madeMove && iterations < 30) {
-      madeMove = false;
-      iterations++;
-      const g = get().game;
-
-      for (const t of Object.values(g.territories)) {
-        if (t.owner !== player || t.isSea) continue;
-        const movable = t.units.filter(
-          (u) => u.owner === player && !u.movedThisTurn && movesLeft(u) > 0 && isLand(u.type),
-        );
-        if (movable.length === 0) continue;
-
-        // Protect factory territories: leave at least 2 defenders behind,
-        // or all units if the territory is directly threatened.
-        const threatened = t.adjacent.some((id) => {
-          const n = g.territories[id];
-          return n && !n.isSea && n.owner !== player && n.owner !== "neutral" && n.units.length > 0;
-        });
-        let attackers = movable;
-        if (t.hasFactory) {
-          if (threatened) continue; // hold position to defend the factory
-          const reserve = Math.min(2, movable.length);
-          attackers = movable.slice(reserve);
-          if (attackers.length === 0) continue;
-        }
-
-        const targets = t.adjacent
-          .map((id) => g.territories[id])
-          .filter((n) => n && !n.isSea && n.owner !== player);
-        if (targets.length === 0) continue;
-
-        targets.sort((a, b) => {
-          const aNeutral = a.owner === "neutral";
-          const bNeutral = b.owner === "neutral";
-          if (aNeutral && !bNeutral) return -1;
-          if (!aNeutral && bNeutral) return 1;
-          const aEmpty = a.units.length === 0;
-          const bEmpty = b.units.length === 0;
-          if (aEmpty && !bEmpty) return -1;
-          if (!aEmpty && bEmpty) return 1;
-          return 0;
-        });
-
-        const target = targets[0];
-        selectTerritory(t.id);
-        const ids = attackers.map((u) => u.id);
-        if (ids.length === 0) continue;
-        useGame.setState({ selectedUnitIds: ids });
-        void selectAllUnitsHere;
-
-        openMoveDialog(target.id);
-        if (!get().moveDialog) continue;
-
-        confirmMove();
-        await sleep(250);
-
-        while (get().pendingBattle?.status === "ongoing") {
+    try {
+      await aiPlayTurn(get, set);
+    } catch (err) {
+      // Never let a bad decision stall the game: log it and end the turn.
+      console.error("AI turn failed", err);
+    } finally {
+      const { pendingBattle, closeBattle, retreatBattle, rollBattleRound } = get();
+      if (pendingBattle) {
+        for (let i = 0; i < 20 && get().pendingBattle?.status === "ongoing"; i++) {
           rollBattleRound();
-          await sleep(350);
+          if (get().pendingBattle?.status === "ongoing") retreatBattle();
         }
-        if (get().pendingBattle) {
-          closeBattle();
-          await sleep(250);
-        }
-
-        madeMove = true;
-        break;
+        closeBattle();
       }
+      useGame.setState({ moveDialog: null, selectedUnitIds: [] });
+      get().endTurn();
+      set({ aiTurnInProgress: false });
     }
-
-
-    await sleep(300);
-    endTurn();
-    set({ aiTurnInProgress: false });
   },
 }));
 
@@ -2695,4 +2604,244 @@ export function getReachable(): Set<string> {
   if (moving.length === 0) return new Set();
   if (moving.some((u) => u.movedThisTurn || u.owner !== game.currentPlayer)) return new Set();
   return legalMoveTargets(game, from.id, moving);
+}
+
+// ---------------------------------------------------------------------------
+// The AI's turn. Every action goes through the same store actions a human
+// uses, so all rules (terrain, canals, multiplayer guards) still apply.
+// ---------------------------------------------------------------------------
+
+const AI_OFFENSE: UnitType[] = ["infantry", "tank", "infantry", "artillery", "tank"];
+const AI_DEFENSE: UnitType[] = ["infantry", "infantry", "artillery"];
+
+async function aiPlayTurn(get: () => Store, _set: unknown): Promise<void> {
+  void _set;
+  await sleep(300);
+  const player = get().game.currentPlayer as Nation;
+  const owned = () =>
+    Object.values(get().game.territories).filter((t) => t.owner === player && !t.isSea);
+
+  // ---------- Construction: fortify the homeland when there is spare cash ----------
+  {
+    const priority: StructureType[] = ["bunker", "harbor", "airfield", "oil_platform", "warehouse", "scrap_yard"];
+    for (const t of owned()) {
+      const g = get().game;
+      const tt = g.territories[t.id];
+      if (!tt.hasFactory || g.treasury[player] < 60) continue;
+      const pick = priority.find(
+        (s) =>
+          !hasStructure(tt, s) &&
+          g.treasury[player] >= STRUCTURE_STATS[s].cost + 35 &&
+          (!STRUCTURE_STATS[s].coastal || tt.adjacent.some((nid) => g.territories[nid]?.isSea)),
+      );
+      if (!pick) continue;
+      get().selectTerritory(t.id);
+      get().buildStructure(pick);
+      await sleep(40);
+    }
+  }
+
+  // ---------- Purchasing: spend the treasury where it is needed most ----------
+  {
+    const g0 = get().game;
+    const factories = owned()
+      .filter((t) => t.hasFactory)
+      .map((t) => {
+        const threat = aiThreat(g0, t, player);
+        const def = aiDefensePower(t.units.filter((u) => u.owner === player), t) * t.units.length;
+        return { t, threat, gap: threat - def };
+      })
+      .sort((a, b) => b.gap - a.gap);
+    let plan = 0;
+    let guard = 0;
+    while (factories.length && guard++ < 40) {
+      const g = get().game;
+      if (g.treasury[player] < UNIT_STATS.infantry.cost) break;
+      // Shore up the most endangered factory first, then build to attack.
+      const f = factories[0].gap > 0 ? factories[0] : factories[plan % factories.length];
+      const list = f.gap > 0 ? AI_DEFENSE : AI_OFFENSE;
+      const want = list[plan % list.length];
+      plan++;
+      get().selectTerritory(f.t.id);
+      const before = get().game.treasury[player];
+      get().buyUnit(want);
+      if (get().game.treasury[player] === before && want !== "infantry") get().buyUnit("infantry");
+      if (get().game.treasury[player] === before) {
+        factories.splice(factories.indexOf(f), 1); // this factory can't build anything affordable
+        continue;
+      }
+      if (f.gap > 0) f.gap -= UNIT_STATS.infantry.defense / 6 * 2;
+      await sleep(30);
+    }
+    // Frontline provinces without a factory may each raise one infantry.
+    for (const t of owned()) {
+      const g = get().game;
+      if (g.treasury[player] < UNIT_STATS.infantry.cost) break;
+      if (t.hasFactory || t.builtInfantryThisTurn || aiThreat(g, t, player) === 0) continue;
+      get().selectTerritory(t.id);
+      get().buyUnit("infantry");
+    }
+  }
+  await sleep(200);
+
+  // ---------- Attacks and expansion ----------
+  const failed = new Set<string>();
+  // Nations we have signed a cease-fire or alliance with are left alone.
+  const partners = new Set<Nation>(
+    get()
+      .game.contracts.filter(
+        (c) =>
+          c.status === "active" &&
+          (c.kind === "ceasefire" || c.kind === "alliance") &&
+          (c.from === player || c.to === player),
+      )
+      .map((c) => (c.from === player ? c.to : c.from)),
+  );
+  for (let step = 0; step < 60; step++) {
+    const g = get().game;
+    let best: { from: string; to: string; ids: string[]; score: number } | null = null;
+    for (const src of owned()) {
+      const movable = src.units.filter(
+        (u) => u.owner === player && !u.movedThisTurn && movesLeft(u) > 0 && isLand(u.type),
+      );
+      if (movable.length === 0) continue;
+      const keep = aiGarrison(g, src, player, movable);
+      const avail = movable.filter((u) => !keep.has(u.id));
+      // A stack held back by a big army next door may still send out a
+      // detachment (up to 40% of it) against a clearly weaker neighbour.
+      const detachMax = Math.max(2, Math.floor(movable.length * 0.4));
+      const pool = avail.length ? avail : movable;
+      // Where can each unit go?
+      const reach = new Map<string, Unit[]>();
+      for (const u of pool) {
+        for (const id of legalMoveTargets(g, src.id, [u])) {
+          const t = g.territories[id];
+          if (!t || t.isSea || t.owner === player) continue;
+          if (failed.has(`${src.id}>${id}`)) continue;
+          if (t.owner !== "neutral" && partners.has(t.owner)) continue; // honour our treaties
+          (reach.get(id) ?? reach.set(id, []).get(id)!).push(u);
+        }
+      }
+      for (const [id, units] of reach) {
+        const t = g.territories[id];
+        const defenders = t.units.filter((u) => u.owner !== player);
+        const value = aiValue(t, player);
+        let ids: string[];
+        let score: number;
+        const spare = avail.length > 0;
+        if (defenders.length === 0) {
+          if (!spare && movable.length < 3) continue;
+          // Empty ground: claim it with the cheapest single unit that can reach.
+          const cheapest = [...units].sort((a, b) => UNIT_STATS[a.type].cost - UNIT_STATS[b.type].cost)[0];
+          ids = [cheapest.id];
+          score = value + 5;
+        } else {
+          // Only units that can make the trip together (the slowest sets the range).
+          let group = units.filter((u) => legalMoveTargets(g, src.id, [u]).has(id));
+          if (!legalMoveTargets(g, src.id, group).has(id)) continue;
+          let needed = value >= 20 ? 1.15 : 1.4;
+          if (!spare) {
+            // Detachment: the strongest attackers, just enough for 2:1 odds.
+            needed = 2;
+            const strongest = [...group].sort((a, b) => UNIT_STATS[b.type].attack - UNIT_STATS[a.type].attack);
+            const picked: Unit[] = [];
+            for (const u of strongest) {
+              if (picked.length >= detachMax) break;
+              picked.push(u);
+              if (aiOdds(picked, defenders, t) >= needed * 1.15) break;
+            }
+            group = picked;
+          }
+          const odds = aiOdds(group, defenders, t);
+          if (odds < needed) continue;
+          ids = group.map((u) => u.id);
+          score = value * Math.min(odds, 3) - defenders.length - (spare ? 0 : 4);
+        }
+        if (!best || score > best.score) best = { from: src.id, to: id, ids, score };
+      }
+    }
+    if (!best) break;
+
+    get().selectTerritory(best.from);
+    useGame.setState({ selectedUnitIds: best.ids });
+    get().openMoveDialog(best.to);
+    if (!get().moveDialog) {
+      failed.add(`${best.from}>${best.to}`);
+      continue;
+    }
+    get().confirmMove();
+    await sleep(220);
+    await aiFightBattle(get);
+  }
+
+  // ---------- Reinforcement: march idle units toward the front ----------
+  {
+    const g = get().game;
+    const mine = owned();
+    const isFront = (t: Terr) =>
+      t.adjacent.some((nid) => {
+        const n = g.territories[nid];
+        return n && !n.isSea && n.owner !== player;
+      });
+    // Distance (through own land) from every province to the nearest front.
+    const dist = new Map<string, number>();
+    const queue: string[] = [];
+    for (const t of mine) if (isFront(t)) { dist.set(t.id, 0); queue.push(t.id); }
+    while (queue.length) {
+      const id = queue.shift()!;
+      for (const nid of g.territories[id].adjacent) {
+        const n = g.territories[nid];
+        if (!n || n.isSea || n.owner !== player || dist.has(nid)) continue;
+        dist.set(nid, dist.get(id)! + 1);
+        queue.push(nid);
+      }
+    }
+    // Front provinces that most need help get it first.
+    const needs = (t: Terr) => aiThreat(g, t, player) - aiDefensePower(t.units.filter((u) => u.owner === player), t) * t.units.length;
+    for (const src of mine) {
+      const gg = get().game;
+      const s = gg.territories[src.id];
+      const movable = s.units.filter((u) => u.owner === player && !u.movedThisTurn && movesLeft(u) > 0 && isLand(u.type));
+      if (!movable.length) continue;
+      const keep = aiGarrison(gg, s, player, movable);
+      const spare = movable.filter((u) => !keep.has(u.id));
+      if (!spare.length) continue;
+      const here = dist.get(s.id) ?? 99;
+      const options = s.adjacent
+        .map((id) => gg.territories[id])
+        .filter((n) => n && !n.isSea && n.owner === player && (dist.get(n.id) ?? 99) < here);
+      if (!options.length) continue;
+      options.sort((a, b) => needs(b) - needs(a));
+      get().selectTerritory(s.id);
+      useGame.setState({ selectedUnitIds: spare.map((u) => u.id) });
+      get().openMoveDialog(options[0].id);
+      if (get().moveDialog) {
+        get().confirmMove();
+        await sleep(120);
+      }
+    }
+  }
+  await sleep(250);
+}
+
+/** Roll out a battle the AI started, withdrawing if it turns against it. */
+async function aiFightBattle(get: () => Store): Promise<void> {
+  for (let round = 0; round < 25 && get().pendingBattle?.status === "ongoing"; round++) {
+    get().rollBattleRound();
+    await sleep(350);
+    const { pendingBattle, game } = get();
+    if (!pendingBattle || pendingBattle.status !== "ongoing") break;
+    const from = game.territories[pendingBattle.attackerId];
+    const to = game.territories[pendingBattle.defenderId];
+    const attackers = from.units.filter((u) => pendingBattle.attackerUnitIds.includes(u.id));
+    const defenders = to.units.filter((u) => u.owner !== game.currentPlayer);
+    if (aiOdds(attackers, defenders, to) < 0.75) {
+      get().retreatBattle();
+      await sleep(250);
+    }
+  }
+  if (get().pendingBattle) {
+    get().closeBattle();
+    await sleep(200);
+  }
 }
