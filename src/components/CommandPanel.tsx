@@ -44,17 +44,9 @@ import {
 } from "@/game/store";
 import { useCanAct, useNet } from "@/game/multiplayer";
 import { OnlineTurnBanner } from "@/components/MultiplayerPanel";
+import { RecruitPanel } from "@/components/RecruitPanel";
 import { GROUND_CARRIER_CAPACITY, ABOMB_RANGE, ABOMB_BLUEPRINTS_REQUIRED } from "@/game/types";
 
-const LAND_ORDER: UnitType[] = [
-  "infantry", "halftrack", "artillery", "howitzer", "tank", "amph_tank",
-  "heavy_tank", "cargo_truck", "dozer", "aa_gun", "railgun",
-];
-const AIR_ORDER: UnitType[] = ["fighter", "bomber", "zeppelin", "spy_plane"];
-const NAVAL_ORDER: UnitType[] = [
-  "transport", "higgins", "submarine", "destroyer", "cruiser",
-  "light_carrier", "battleship", "fleet_carrier",
-];
 
 export function CommandPanel() {
   const game = useGame((s) => s.game);
@@ -63,7 +55,6 @@ export function CommandPanel() {
   const aiTurnInProgress = useGame((s) => s.aiTurnInProgress);
   const selectAllUnitsHere = useGame((s) => s.selectAllUnitsHere);
   const toggleUnit = useGame((s) => s.toggleUnit);
-  const buyUnit = useGame((s) => s.buyUnit);
   const buyFactory = useGame((s) => s.buyFactory);
   const buildStructure = useGame((s) => s.buildStructure);
   const upgradeStructure = useGame((s) => s.upgradeStructure);
@@ -1156,93 +1147,13 @@ export function CommandPanel() {
                 )}
               </div>
 
-              <div className="mt-2 grid grid-cols-3 gap-1">
-                {LAND_ORDER.map((type) => {
-                  const s = UNIT_STATS[type];
-                  const afford = game.treasury[player] >= s.cost;
-                  const allowed =
-                    t.hasFactory || (type === "infantry" && !t.builtInfantryThisTurn);
-                  const disabled = !afford || !allowed;
-                  return (
-                    <button
-                      key={type}
-                      onClick={() => buyUnit(type)}
-                      disabled={disabled}
-                      className="rounded border border-border bg-parchment px-1 py-1.5 text-[10px] font-semibold uppercase tracking-wide hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40"
-                      title={
-                        !allowed
-                          ? type === "infantry"
-                            ? "Already conscripted this turn"
-                            : "Requires a Factory"
-                          : ""
-                      }
-                    >
-                      {s.label}
-                      <div className="text-[9px] font-normal text-muted-foreground">
-                        {s.cost} NPP
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-
-              {t.hasFactory && (
-                <>
-                  <div className="mt-3 text-[10px] uppercase tracking-widest text-muted-foreground">
-                    Air Wing
-                  </div>
-                  <div className="mt-1 grid grid-cols-4 gap-1">
-                    {AIR_ORDER.map((type) => {
-                      const s = UNIT_STATS[type];
-                      const afford = game.treasury[player] >= s.cost;
-                      return (
-                        <button
-                          key={type}
-                          onClick={() => buyUnit(type)}
-                          disabled={!afford || !hasAirfield}
-                          title={!hasAirfield ? "Requires an Airfield" : ""}
-                          className="rounded border border-border bg-parchment px-1 py-1.5 text-[10px] font-semibold uppercase tracking-wide hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40"
-                        >
-                          {s.label}
-                          <div className="text-[9px] font-normal text-muted-foreground">
-                            {s.cost} NPP
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                  <div className="mt-3 text-[10px] uppercase tracking-widest text-muted-foreground">
-                    Naval Shipyard
-                  </div>
-                  <div className="mt-1 grid grid-cols-4 gap-1">
-                    {NAVAL_ORDER.map((type) => {
-                      const s = UNIT_STATS[type];
-                      const afford = game.treasury[player] >= s.cost;
-                      const allowed = isNaval(type) ? hasAdjacentSea && hasHarbor : true;
-                      const disabled = !afford || !allowed;
-                      return (
-                        <button
-                          key={type}
-                          onClick={() => buyUnit(type)}
-                          disabled={disabled}
-                          className="rounded border border-border bg-parchment px-1 py-1.5 text-[10px] font-semibold uppercase tracking-wide hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40"
-                          title={!allowed ? "Needs a Harbor on a coastal territory" : ""}
-                        >
-                          {s.label}
-                          <div className="text-[9px] font-normal text-muted-foreground">
-                            {s.cost} NPP
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                  {(!hasAdjacentSea || !hasHarbor) && (
-                    <div className="mt-1 text-[10px] italic text-muted-foreground">
-                      Ships launch only from a Harbor on a coastal territory.
-                    </div>
-                  )}
-                </>
-              )}
+              <RecruitPanel
+                territory={t}
+                treasury={game.treasury[player]}
+                hasAirfield={hasAirfield}
+                hasHarbor={hasHarbor}
+                hasAdjacentSea={hasAdjacentSea}
+              />
               {!t.hasFactory && (
                 <div className="mt-1 text-[10px] italic text-muted-foreground">
                   Without a factory you may conscript one Infantry per turn.

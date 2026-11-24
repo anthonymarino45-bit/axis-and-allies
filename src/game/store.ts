@@ -82,8 +82,6 @@ export interface PendingBattle {
   opening?: OpeningFire;
   /** Last retreat attempt (D6, 1-3 succeeds). */
   retreatRoll?: { roll: number; success: boolean };
-  /** The round after which a withdrawal was last attempted (one try per round). */
-  retreatTriedAfterRound?: number;
 }
 
 /** One gun's fire in a stand-alone bombardment. */
@@ -173,6 +171,8 @@ interface Store extends UIState {
   confirmMove: () => void;
   cancelMove: () => void;
   buyUnit: (type: UnitType) => void;
+  /** Buy a whole order of mixed units at the selected territory; returns how many were bought. */
+  buyUnits: (order: Partial<Record<UnitType, number>>) => number;
   buyFactory: () => void;
   buildStructure: (type: StructureType) => void;
   upgradeStructure: (from: StructureType) => void;
@@ -1365,28 +1365,13 @@ export const useGame = create<Store>((set, get) => ({
   retreatBattle: () => {
     const { game, pendingBattle } = get();
     if (!pendingBattle || pendingBattle.status !== "ongoing") return;
-    // A withdrawal is only possible between rounds: after the first roll, and
-    // once per round — a failed attempt means fighting the next round first.
-    const round = pendingBattle.rounds.length;
-    if (round === 0 || pendingBattle.retreatTriedAfterRound === round) return;
-    // Rulebook: a withdrawal needs a D6 of 1-3; otherwise the fight goes on.
-    const r = d6();
-    const success = r <= 3;
+    // Withdrawing is free, but only between rounds: the first round must be fought.
+    if (pendingBattle.rounds.length === 0) return;
     const next: GameState = JSON.parse(JSON.stringify(game));
-    log(
-      next,
-      success
-        ? `Retreat roll ${r} — the withdrawal succeeds.`
-        : `Retreat roll ${r} — the line holds, combat continues.`,
-    );
+    log(next, `${NATIONS[next.currentPlayer].name} withdraws from ${next.territories[pendingBattle.defenderId].name}.`);
     set({
       game: next,
-      pendingBattle: {
-        ...pendingBattle,
-        retreatRoll: { roll: r, success },
-        retreatTriedAfterRound: round,
-        status: success ? "retreated" : "ongoing",
-      },
+      pendingBattle: { ...pendingBattle, status: "retreated" },
     });
   },
 
@@ -1487,6 +1472,20 @@ export const useGame = create<Store>((set, get) => ({
     const where = next.territories[spawnTerritoryId].name;
     log(next, `${NATIONS[player].name} built ${UNIT_STATS[type].label} in ${where}.`);
     set({ game: next });
+  },
+
+  buyUnits: (order) => {
+    const player = get().game.currentPlayer;
+    let bought = 0;
+    for (const [type, count] of Object.entries(order) as Array<[UnitType, number]>) {
+      for (let i = 0; i < (count ?? 0); i++) {
+        const before = get().game.treasury[player];
+        get().buyUnit(type);
+        if (get().game.treasury[player] >= before) break; // not allowed here, or out of money
+        bought++;
+      }
+    }
+    return bought;
   },
 
   buyFactory: () => {

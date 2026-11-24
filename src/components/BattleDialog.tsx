@@ -95,7 +95,6 @@ export function BattleDialog() {
   );
 
   const ongoing = pendingBattle.status === "ongoing";
-  const retreatTried = pendingBattle.retreatTriedAfterRound === pendingBattle.rounds.length;
   const statusLabel =
     pendingBattle.status === "attacker-won"
       ? `Victory — ${to.name} captured`
@@ -104,7 +103,7 @@ export function BattleDialog() {
         : pendingBattle.status === "stalemate"
           ? `Stalemate — both sides destroyed`
           : pendingBattle.status === "retreated"
-            ? `Retreat declared`
+            ? `Withdrawn — attackers pull back`
             : `Round ${pendingBattle.rounds.length} of ${pendingBattle.rounds.length + 1}`;
 
   return (
@@ -177,14 +176,6 @@ export function BattleDialog() {
             </div>
           )}
 
-        {pendingBattle.retreatRoll &&
-          !pendingBattle.retreatRoll.success &&
-          pendingBattle.retreatTriedAfterRound === pendingBattle.rounds.length && (
-            <div className="mt-3 rounded border border-destructive/50 bg-destructive/15 p-2 text-center text-xs font-semibold uppercase tracking-widest">
-              Withdrawal roll {pendingBattle.retreatRoll.roll} — failed (needs 1-3). Your troops
-              must fight the next round.
-            </div>
-          )}
 
         {lastRound && (
           <div className="mt-4 rounded border border-border bg-card p-3">
@@ -234,8 +225,8 @@ export function BattleDialog() {
             <div className="mt-1 text-sm">
               <b>{pendingBattle.attackerUnitIds.length}</b> attacking unit
               {pendingBattle.attackerUnitIds.length === 1 ? "" : "s"} vs <b>{to.units.length}</b>{" "}
-              defending unit{to.units.length === 1 ? "" : "s"} remain. Press the attack, or try to
-              withdraw (needs 1-3 on a die).
+              defending unit{to.units.length === 1 ? "" : "s"} remain. Press the attack, or withdraw
+              your surviving attackers — no roll, no penalty.
             </div>
           </div>
         )}
@@ -249,7 +240,7 @@ export function BattleDialog() {
         <div className="mt-5 flex items-center justify-between gap-2">
           <div className="text-[10px] uppercase tracking-widest text-muted-foreground">
             {ongoing && pendingBattle.rounds.length === 0
-              ? "You can try to withdraw after the first roll"
+              ? "You can withdraw after the first roll"
               : "Casualties taken cheapest-first"}
           </div>
           <div className="flex gap-2">
@@ -262,15 +253,10 @@ export function BattleDialog() {
                 {pendingBattle.rounds.length > 0 && (
                   <button
                     onClick={retreatBattle}
-                    disabled={retreatTried}
-                    title={
-                      retreatTried
-                        ? "You already tried to withdraw this round — fight the next round first"
-                        : "Roll a die: 1-3 and your attackers pull back"
-                    }
+                    title="Pull your surviving attackers back to where they came from"
                     className="rounded border border-border bg-secondary px-3 py-2 text-xs font-semibold uppercase tracking-wider hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40"
                   >
-                    {retreatTried ? "Withdrawal failed" : "Withdraw"}
+                    Withdraw
                   </button>
                 )}
                 <button
